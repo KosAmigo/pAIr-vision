@@ -118,6 +118,8 @@ class ModelReport:
     hands_mean: float = 0.0
     images: int = 0
     per_image: dict[str, list[dict]] = field(default_factory=dict)
+    # 사진 -> 찾은 손 [{"side","x","y"}] (x·y 는 사진 비율 0~1). 손을 안 내는 모델은 모든 사진이 빈 목록
+    hands_per_image: dict[str, list[dict]] = field(default_factory=dict)
 
 
 def summarize(raws: dict[str, RawResult]) -> dict[str, tuple[int, float]]:
@@ -179,6 +181,10 @@ def measure(
                 }
                 for o in raw.objects
             ]
+            for name, raw in raws.items()
+        },
+        hands_per_image={
+            name: [{"side": h.side, "x": round(h.x, 3), "y": round(h.y, 3)} for h in raw.hands]
             for name, raw in raws.items()
         },
     )

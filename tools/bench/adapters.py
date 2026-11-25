@@ -78,9 +78,24 @@ def _pick_device() -> str:
     return "cuda" if torch.cuda.is_available() else "cpu"
 
 
+# MediaPipe 손 검출의 기본 기준값(라이브러리 기본과 같다)
+DEFAULT_HAND_CONF = 0.5
+
+
 def _norm(box: Sequence[float], image) -> Box:
     x0, y0, x1, y1 = box
     return Box(x0 / image.width, y0 / image.height, x1 / image.width, y1 / image.height)
+
+
+def box_in_image(box: Sequence[float], width: int, height: int) -> Box:
+    """픽셀 박스를 사진 크기로 나눠 0~1 로 바꾼다(사진 밖으로 나간 부분은 잘라낸다).
+
+    OWLv2 는 사진을 긴 변 기준 정사각형으로 패딩한 평면의 좌표를 내지만, 사진은 그 평면의 왼쪽 위에
+    놓인다. 그러므로 사진의 가로·세로로 나누면 곧바로 사진 기준 좌표가 되고, 추가로 곱할 것이 없다
+    (예전에는 긴 변/짧은 변 비율을 한 번 더 곱해 가로로 긴 사진에서 세로 위치가 1 을 넘었다).
+    """
+    x0, y0, x1, y1 = (min(1.0, max(0.0, v)) for v in (box[0] / width, box[1] / height, box[2] / width, box[3] / height))
+    return Box(x0, y0, x1, y1)
 
 
 def _require_dir(path: Path) -> None:
@@ -164,12 +179,11 @@ class HfZeroShot(BenchModel):
         with torch.no_grad():
             out = self._model(**inputs)
         if self._kind == "owlv2":
-            # OWLv2 는 정사각형 패딩 기준 좌표를 낸다 -> 긴 변 기준으로 되돌린다
+            # OWLv2 는 긴 변 기준 정사각형 패딩 평면의 좌표를 낸다(사진은 그 왼쪽 위). 좌표를 사진 크기로 나누는 것은 box_in_image 가 한다
             side = max(image.height, image.width)
             post = getattr(self._proc, "post_process_grounded_object_detection", None) or self._proc.post_process_object_detection
             res = post(out, threshold=self._threshold, target_sizes=[(side, side)])[0]
             names = [label_for_text(self._prompts[int(i)], self._prompts) for i in res["labels"]]
-            scale = (side / image.width, side / image.height)
         else:
             res = self._proc.post_process_grounded_object_detection(
                 out,
@@ -180,14 +194,10 @@ class HfZeroShot(BenchModel):
             )[0]
             names = [label_for_text(str(n), self._prompts)
                      for n in res.get("text_labels", res.get("labels", []))]
-            scale = (1.0, 1.0)
-        objects = []
-        for score, name, box in zip(res["scores"], names, res["boxes"], strict=True):
-            b = _norm(box.tolist(), image)
-            objects.append(
-                ObjectDet(str(name), float(score), Box(b.x0 * scale[0], b.y0 * scale[1],
-                                                       b.x1 * scale[0], b.y1 * scale[1]))
-            )
+        objects = [
+            ObjectDet(str(name), float(score), box_in_image(box.tolist(), image.width, image.height))
+            for score, name, box in zip(res["scores"], names, res["boxes"], strict=True)
+        ]
         return RawResult(objects=tuple(objects))
 
 
@@ -196,8 +206,13 @@ class MediaPipeHands(BenchModel):
 
     name = "mediapipe-hands"
 
-    def __init__(self, task_file: str = "hand_landmarker.task") -> None:
+    def __init__(self, task_file: str = "hand_landmarker.task", conf: float = DEFAULT_HAND_CONF) -> None:
+        if not 0.0 < conf <= 1.0:
+            raise ValueError(f"손 감지 기준값은 0 초과 1 이하여야 합니다: {conf}")
         self._path = MODELS_DIR / task_file
+        self._conf = conf
+        # 기준값을 바꾼 것은 표에서 구분되도록 이름에 붙인다(예: mediapipe-hands@0.1)
+        self.name = "mediapipe-hands" if conf == DEFAULT_HAND_CONF else f"mediapipe-hands@{conf:g}"
 
     def load(self) -> None:
         if not self._path.is_file():
@@ -205,8 +220,13 @@ class MediaPipeHands(BenchModel):
         import mediapipe as mp
         from mediapipe.tasks.python import BaseOptions, vision
 
+        # 기준값을 낮추면 마우스·펜을 쥔 손처럼 잘 안 잡히던 손이 더 잡히지만 손이 아닌 것을 잡을 위험도 는다
         options = vision.HandLandmarkerOptions(
-            base_options=BaseOptions(model_asset_path=str(self._path)), num_hands=2
+            base_options=BaseOptions(model_asset_path=str(self._path)),
+            num_hands=2,
+            min_hand_detection_confidence=self._conf,
+            min_hand_presence_confidence=self._conf,
+            min_tracking_confidence=self._conf,
         )
         self._landmarker = vision.HandLandmarker.create_from_options(options)
         self._mp = mp

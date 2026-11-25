@@ -1,0 +1,6 @@
+# 빌드 컨텍스트에 필요한 것만 보낸다(.venv-bench·models 의 큰 가중치 등은 제외)
+*
+!src/pair_vision
+!tools/bench
+!models/hand_landmarker.task
+**/__pycache__

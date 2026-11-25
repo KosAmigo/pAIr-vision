@@ -1,0 +1,37 @@
+# syntax=docker/dockerfile:1
+# RunPod 모델 비교 측정용 이미지: 패키지와 모델 가중치를 모두 넣어 둔다. Pod 에서는 명령 하나만 실행하면 된다.
+#   빌드(저장소 루트에서): docker build -f tools/bench/Dockerfile.bench -t <사용자>/pair-bench:gpu .
+#   Pod 에서 실행:         bash /opt/pair-bench/tools/bench/runpod_bench.sh
+# 베이스는 RunPod 공식 PyTorch 이미지(CUDA·Jupyter·SSH 포함). torch 는 베이스의 것을 그대로 쓴다.
+# Pod 의 CUDA 버전이 12.8 이상인 GPU 를 골라야 한다(Pod 만들 때 CUDA 버전 필터).
+ARG BASE_IMAGE=runpod/pytorch:2.8.0-py3.11-cuda12.8.1-cudnn-devel-ubuntu22.04
+FROM ${BASE_IMAGE}
+
+ENV PYTHONUNBUFFERED=1 HF_HUB_DISABLE_TELEMETRY=1
+WORKDIR /opt/pair-bench
+
+RUN pip install --no-cache-dir transformers scipy pillow numpy huggingface_hub mediapipe \
+ && pip freeze > /opt/pair-bench/pip-freeze.txt
+
+# 모델 가중치(공개 모델). 어댑터가 models/<폴더> 에서 읽는다.
+RUN python - <<'PY'
+from pathlib import Path
+
+from huggingface_hub import snapshot_download
+
+MODELS = {
+    "rtdetr_r18vd_coco_o365": "PekingU/rtdetr_r18vd_coco_o365",
+    "dfine-small-coco": "ustc-community/dfine-small-coco",
+    "owlv2-base-patch16-ensemble": "google/owlv2-base-patch16-ensemble",
+}
+for folder, repo in MODELS.items():
+    snapshot_download(
+        repo,
+        local_dir=Path("models") / folder,
+        ignore_patterns=["*.bin", "*.onnx", "*.msgpack", "*.h5", "*.ot"],
+    )
+PY
+
+COPY models/hand_landmarker.task models/hand_landmarker.task
+COPY src/pair_vision src/pair_vision
+COPY tools/bench tools/bench
