@@ -1,0 +1,50 @@
+"""환경 변수 설정. 비밀(키·서명 비밀)은 환경 변수로만 받는다."""
+
+from __future__ import annotations
+
+from collections.abc import Mapping
+from dataclasses import dataclass
+
+
+class ConfigError(ValueError):
+    pass
+
+
+@dataclass(frozen=True)
+class Settings:
+    api_keys: tuple[str, ...]
+    callback_url: str = ""
+    callback_key_id: str = "k1"
+    callback_secret: str = ""
+    max_sessions: int = 40  # 계약 §3-3: 실측(M4·M5) 전 임시값
+    rules_path: str = "configs/rules.default.yaml"
+    detector: str = "fake"
+    fake_scenario: str = "normal"
+    state_interval_s: float = 2.0
+    max_frame_bytes: int = 256 * 1024
+    version: str = "0.1.0"
+
+    @classmethod
+    def from_env(cls, env: Mapping[str, str]) -> Settings:
+        keys = tuple(
+            k for k in (env.get("VISION_API_KEY", ""), env.get("VISION_API_KEY_NEXT", "")) if k
+        )
+        if not keys:
+            raise ConfigError("VISION_API_KEY 환경 변수가 필요합니다.")
+        url = env.get("VISION_CALLBACK_URL", "")
+        secret = env.get("VISION_CALLBACK_SECRET", "")
+        if url and not secret:
+            raise ConfigError("VISION_CALLBACK_URL 을 쓰려면 VISION_CALLBACK_SECRET 이 필요합니다.")
+        return cls(
+            api_keys=keys,
+            callback_url=url,
+            callback_key_id=env.get("VISION_CALLBACK_KEY_ID", "k1"),
+            callback_secret=secret,
+            max_sessions=int(env.get("VISION_MAX_SESSIONS", "40")),
+            rules_path=env.get("VISION_RULES_PATH", "configs/rules.default.yaml"),
+            detector=env.get("VISION_DETECTOR", "fake"),
+            fake_scenario=env.get("VISION_FAKE_SCENARIO", "normal"),
+            state_interval_s=float(env.get("VISION_STATE_INTERVAL_S", "2")),
+            max_frame_bytes=int(env.get("VISION_MAX_FRAME_BYTES", str(256 * 1024))),
+            version=env.get("VISION_VERSION", "0.1.0"),
+        )

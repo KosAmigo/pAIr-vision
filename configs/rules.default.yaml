@@ -1,0 +1,17 @@
+# 규칙 값 (계약 §9, 모두 임시값 — 실측 M1~M6 뒤 조정). 배포 없이 이 파일만 바꿔 쓴다.
+# 이벤트의 rulesVersion 에는 아래 version 이 그대로 기록된다. 값을 바꾸면 version 도 올린다.
+version: "2026-11-25.1"
+
+profiles:
+  default:
+    calibration_ms: 3000          # 웹캠 보정 시간 (exam 시작/recalibrate 뒤)
+    hands:
+      hands_out_ms: 7000          # HANDS_OUT: 두 손 모두 영역 밖 연속
+      hand_out_one_ms: 10000      # HAND_OUT_ONE: 한 손만 밖 연속
+      gap_tolerance_ms: 3000      # 정상으로 돌아와도 이 시간까지는 같은 상태로 이어 센다
+      cooldown_ms: 10000          # 같은 규칙 재발 최소 간격 (직전 이벤트가 끝난 시점부터)
+      unseen_hand_counts_as_out: true   # 설계 §7-2 D-5′: 안 보이는 손은 "밖"
+      area_margin: 0.05           # 키보드·마우스 박스 여유 마진 (프레임 비율)
+    check:
+      pass_hold_ms: 3000          # 모든 항목이 연속으로 참이어야 하는 시간
+      min_interval_ms: 500        # check 메시지 최소 간격 (최대 초당 2번)

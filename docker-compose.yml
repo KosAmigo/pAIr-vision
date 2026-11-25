@@ -1,0 +1,38 @@
+# 로컬 개발(CPU, 가짜 모델).   docker compose up --build
+#   확인: curl -H "Authorization: Bearer dev-key" http://localhost:8000/readyz
+# 데모(콜백 수신기 + 재생기):  docker compose --profile demo up --build
+# 아래 키·비밀은 로컬 개발용 값이다. 운영 값은 환경 변수/RunPod 시크릿으로만 넣는다.
+services:
+  vision:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      VISION_API_KEY: dev-key
+      VISION_API_KEY_NEXT: ""
+      VISION_DETECTOR: fake
+      VISION_FAKE_SCENARIO: normal
+      VISION_MAX_SESSIONS: "40"
+      VISION_CALLBACK_URL: ${VISION_CALLBACK_URL:-http://sink:9000/internal/vision/events}
+      VISION_CALLBACK_KEY_ID: k1
+      VISION_CALLBACK_SECRET: dev-callback-secret
+    ulimits:
+      core: 0
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request as u; u.urlopen('http://localhost:8000/healthz', timeout=3)"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  sink:
+    profiles: [demo]
+    image: python:3.12-slim
+    working_dir: /app
+    volumes:
+      - .:/app:ro
+    environment:
+      VISION_CALLBACK_SECRET: dev-callback-secret
+      PYTHONPATH: /app/src
+    command: sh -c "pip install -q fastapi 'uvicorn[standard]' && python tools/replay/sink.py --port 9000"
+    ports:
+      - "9000:9000"
