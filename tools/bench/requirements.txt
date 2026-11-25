@@ -1,0 +1,8 @@
+# 측정 도구 전용(서버 본체 의존성 아님). Python 3.12 권장(3.14 는 torch·mediapipe 휠이 없을 수 있음).
+# 설치는 사용자 허락 후: uv venv --python 3.12 .venv-bench ; uv pip install -r tools/bench/requirements.txt
+pillow
+numpy
+torch
+transformers
+mediapipe
+scipy
