@@ -42,7 +42,7 @@ else
 fi
 
 echo "[2/3] 파이썬 환경"
-WANT="$(cat "$ROOT/pyproject.toml" "$ROOT/uv.lock" | sha256sum | cut -d' ' -f1)"
+WANT="$({ cat "$ROOT/pyproject.toml"; cat "$ROOT/uv.lock" 2>/dev/null || true; } | sha256sum | cut -d' ' -f1)"
 if [ -x "$VENV/bin/python" ] && [ "$(cat "$VENV/.stamp" 2>/dev/null || true)" = "$WANT" ]; then
   echo "  이미 준비됨 (재설치 없음)"
 else
