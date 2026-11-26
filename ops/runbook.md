@@ -52,3 +52,13 @@
 
 ### 6-1. 노트북으로 한 번에 (`tools/runpod/runpod_server.ipynb`)
 RunPod PyTorch 템플릿 Pod 의 JupyterLab 에 이 파일을 올려 위에서부터 실행한다: 코드 받기(`git clone`, 비공개면 토큰을 물어봄) → `pip install -e ".[real]"` → 모델 5개 내려받기(Hugging Face·Google)와 `models.lock` sha256 검증 → 서버 실행 → `gpu` 확인 → 재생 시험(사진이 없으면 합성 이미지로 속도만) → 종료. **노트북은 GitHub 의 `main` 을 받으므로 먼저 이 저장소를 푸시해 둬야 한다.** 사진·응시자 실사진은 노트북에 들어 있지 않다. GPU 에서는 아직 돌려 보지 못했다.
+
+### 6-2. 백엔드 연결 (백엔드 `feat/server-vision` 의 `application.yml` 확인 결과)
+| 백엔드 환경 변수 | 넣을 값 (서버 쪽 대응) |
+|---|---|
+| `PAIR_VISION_INFERENCE_URL` | 추론 서버 주소 (RunPod HTTP 프록시 `https://<pod id>-8000.proxy.runpod.net`) |
+| `PAIR_VISION_INFERENCE_KEY` | 서버 `VISION_API_KEY` 와 같은 값 (Bearer) |
+| `PAIR_VISION_EVENT_HMAC_SECRET` (`..._NEXT` 는 교체용) | 서버 `VISION_CALLBACK_SECRET` 과 같은 값. 서버 `VISION_CALLBACK_KEY_ID` 는 `k1`(`..._NEXT` 는 `k2`) |
+| `PAIR_SERVER_VISION_ENABLED` | **`false`** 로 두고 시작(테스트 회차에서만 켠다) |
+- 서버 → 백엔드 콜백 주소 `VISION_CALLBACK_URL` 은 백엔드의 `/internal/vision/events` 전체 주소(RunPod 에서 닿는 공개 주소).
+- **현재 백엔드에는 실제 추론 서버 클라이언트(`/v1/stream`·REST 호출)가 없고 가짜 `StubInferenceClient` 만 있다**(`infra/ai/InferenceClient.java` 주석). 그 구현이 들어가기 전에는 백엔드↔서버 종단 연결이 불가능하다. 그 전까지의 확인은 노트북 6번 칸(서버 단독 재생 시험)과 콜백은 `tools/replay/sink.py` 로 한다. RunPod 프록시가 WebSocket 을 통과시키는지는 노트북 7번 칸이 확인한다.
