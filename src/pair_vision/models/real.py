@@ -54,6 +54,8 @@ class RealDetector(Detector):
         self._lock_path = lock_path
         self._verify = verify
         self._last_owl_ms: dict[str, int] = {}
+        self._webcam_frames: dict[str, int] = {}  # 웹캠 프레임 수(포즈를 N 프레임마다만 돌리려고)
+        self._last_pose: dict[str, object] = {}  # 직전 포즈 랜드마크(사이 프레임에서 재사용)
         self.gpu = False
 
     # --- 적재 ---
@@ -114,6 +116,8 @@ class RealDetector(Detector):
 
     def forget(self, key: str) -> None:
         self._last_owl_ms.pop(key, None)
+        self._webcam_frames.pop(key, None)
+        self._last_pose.pop(key, None)
 
     # --- 실행 ---
     def run(self, frames: Sequence[Frame]) -> list[Detection]:
@@ -161,7 +165,11 @@ class RealDetector(Detector):
         image = Image.open(io.BytesIO(frame.jpeg)).convert("RGB")
         mp_image = self._mp.Image(self._mp.ImageFormat.SRGB, np.asarray(image))
         face = self._face.detect(mp_image)
-        pose = self._pose.detect(mp_image)
+        count_before = self._webcam_frames.get(frame.key, 0)
+        self._webcam_frames[frame.key] = count_before + 1
+        if count_before % self._rules.pose_every == 0 or frame.key not in self._last_pose:
+            pose = self._pose.detect(mp_image)  # 몸통은 천천히 움직이므로 포즈는 드물게(프론트도 얼굴 3 : 포즈 1)
+            self._last_pose[frame.key] = pose.pose_landmarks[0] if pose.pose_landmarks else None
         count = len(face.face_landmarks)
         matrix = face.facial_transformation_matrixes[0] if count and face.facial_transformation_matrixes else None
         blend = (
@@ -169,7 +177,7 @@ class RealDetector(Detector):
             if count and face.face_blendshapes
             else None
         )
-        landmarks = pose.pose_landmarks[0] if pose.pose_landmarks else None
+        landmarks = self._last_pose.get(frame.key)
         return Detection(
             key=frame.key, channel=frame.channel, seq=frame.seq, recv_ms=frame.recv_ms,
             webcam=webcam_features(count, matrix, blend, landmarks),

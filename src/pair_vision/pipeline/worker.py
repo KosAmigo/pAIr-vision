@@ -115,10 +115,10 @@ class Pipeline:
 
     async def process_pending(self) -> int:
         frames = self.mailboxes.take_all()
-        done = 0
-        for i in range(0, len(frames), MAX_BATCH):
-            done += await self._process_batch(frames[i : i + MAX_BATCH])
-        return done
+        if not frames:
+            return 0
+        # 한 번에 전부 넘긴다: 프로세스 풀은 응시자별 워커로 나눠 병렬 처리하고, 단일 프로세스는 안에서 차례로 처리한다
+        return await self._process_batch(frames)
 
     async def _process_batch(self, parsed: list[ParsedFrame]) -> int:
         batch: list[Frame] = []
@@ -132,7 +132,7 @@ class Pipeline:
         if not batch:
             return 0
         try:
-            detections = await asyncio.to_thread(self.detector.run, batch)
+            detections = await self.detector.run_async(batch)
         except Exception:  # noqa: BLE001 - 모델 오류가 서버를 죽이지 않게
             self.metrics.detector_errors.inc()
             log.exception("모델 실행 오류")

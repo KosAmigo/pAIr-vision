@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -104,6 +105,13 @@ class Detector(ABC):
 
     def load(self) -> None:  # noqa: B027 - 가짜 구현은 적재할 것이 없다
         """모델 적재. 끝나면 /readyz 의 modelsLoaded 가 참이 된다."""
+
+    def close(self) -> None:  # noqa: B027 - 서버 종료 때 자원(워커 프로세스 등)을 정리한다
+        """서버 종료 알림."""
+
+    async def run_async(self, frames: Sequence[Frame]) -> list[Detection]:
+        """파이프라인이 부르는 실행. 기본은 스레드 하나에서 run 을 돌린다(프로세스 풀은 이것을 병렬로 바꾼다)."""
+        return await asyncio.to_thread(self.run, frames)
 
     def forget(self, key: str) -> None:  # noqa: B027 - 세션이 끝났을 때 세션별 상태를 비운다
         """세션 종료 알림. 세션별 상태(예: OWLv2 주기)를 가진 구현이 비운다."""

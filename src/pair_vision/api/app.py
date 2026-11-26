@@ -43,6 +43,8 @@ def build_core(
         model_rules=rules.models,
         lock_path=settings.models_lock_path,
         verify=settings.verify_models,
+        workers=settings.workers,
+        worker_threads=settings.worker_threads,
     )
     metrics = Metrics()
     if sink is None:
@@ -95,6 +97,7 @@ def create_app(
                     await task
             if isinstance(core.sink, CallbackSender):
                 await core.sink.close()
+            core.detector.close()
 
     app = FastAPI(title="pAIr vision", version=settings.version, lifespan=lifespan,
                   docs_url=None, redoc_url=None, openapi_url=None)

@@ -150,7 +150,15 @@ def create_detector(
     model_rules=None,
     lock_path: str | None = None,
     verify: bool = True,
+    workers: int = 1,
+    worker_threads: int = 0,
 ) -> Detector:
+    if workers > 1:  # 모델을 프로세스 여러 개에 올려 병렬 처리(실측: 한 프로세스는 CPU 에서 초당 약 5장에서 막힘)
+        from pair_vision.models.pool import PooledDetector
+
+        spec = {"kind": kind, "scenario": scenario, "models_dir": models_dir, "model_rules": model_rules,
+                "lock_path": lock_path, "verify": verify}
+        return PooledDetector(spec, workers, worker_threads)
     if kind == "fake":
         return FakeDetector(scenario)
     if kind == "real":

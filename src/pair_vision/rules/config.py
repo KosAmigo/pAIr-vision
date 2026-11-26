@@ -97,6 +97,7 @@ class ModelRules:
     hand_threshold: float = 0.5
     max_hands: int = 4
     hand_merge_distance: float = 0.06  # 이보다 가까운 두 손은 하나로(프레임 비율, 점수 높은 쪽 유지)
+    pose_every: int = 3  # 웹캠: 얼굴은 매 프레임, 포즈(어깨)는 N 프레임마다(사이에는 직전 값 재사용, CPU 절약. 프론트는 4)
 
 
 @dataclass(frozen=True)
@@ -215,8 +216,12 @@ def _parse_models(raw: Mapping) -> ModelRules:
             "smartwatch_threshold", "phone_threshold", "hand_threshold",
         )
     }
+    pose_every = raw.get("pose_every", d.pose_every)
+    if not isinstance(pose_every, int) or isinstance(pose_every, bool) or pose_every < 1:
+        raise ValueError(f"규칙 설정 models.pose_every 는 1 이상의 정수여야 합니다: {pose_every!r}")
     return ModelRules(
         **scores,
+        pose_every=pose_every,
         owl_interval_ms=_positive("models", "owl_interval_ms", raw.get("owl_interval_ms", d.owl_interval_ms)),
         max_hands=max_hands,
         hand_merge_distance=float(merge),

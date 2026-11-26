@@ -90,6 +90,7 @@ $env:VISION_RULES_PATH = "configs/rules.local-cpu.yaml"    # CPU 전용(아래 �
 | `VISION_DETECTOR` / `VISION_FAKE_SCENARIO` | `fake` / `normal` | `fake` 또는 `real`. 가짜 시나리오(`hands_out` `one_hand_out` `flicker` 또는 `NORMAL:3,BOTH_OUT:10,NORMAL:1`; 프레임 표식 `FAKE:TABLET`·`FAKE:NOTE` 도 있다) |
 | `VISION_MODELS_DIR` / `VISION_MODELS_LOCK` | `./models` / `configs/models.lock` | 모델 폴더(git 제외)와 검증용 lock |
 | `VISION_VERIFY_MODELS` | `1` | 시작할 때 모델 파일 sha256 을 lock 과 대조(`0` 이면 건너뜀) |
+| `VISION_WORKERS` / `VISION_WORKER_THREADS` | `1` / `0` | 모델 프로세스(워커) 수와 워커당 CPU 코어·스레드 수(0=사용 가능 코어/워커 수). 2 이상이면 응시자별로 워커를 고정 배정해 병렬 처리한다. **실측(RTX A5000 Pod): 워커 1개일 때 초당 약 5장에서 막혀 응시자 2명까지만 처리됐다(GPU 3~17%, CPU load 높음).** 워커 병렬화 효과는 Pod 에서 다시 재야 한다 |
 | `VISION_HOST` `VISION_PORT` `VISION_LOG_LEVEL` | `0.0.0.0` `8000` `INFO` | |
 
 비밀은 환경 변수/RunPod 시크릿으로만 넣는다. `docker-compose.yml` 의 `dev-key` 는 로컬 개발 전용이다.
@@ -138,3 +139,8 @@ $env:VISION_RULES_PATH = "configs/rules.local-cpu.yaml"    # CPU 전용(아래 �
 | 960px q90 | -0.83 | +0.50 | -0.27 |
 
 계약값(400px·q55)에서는 시선 값이 절반 아래로 줄어 기준값 0.45 를 거의 못 넘고, 정면에서도 `gaze_y` 가 사진마다 ±0.15~0.3 흔들린다. **현재 계약 해상도로는 `GAZE_AWAY` 를 믿기 어렵다 → 사용자 결정(2026-11-26)으로 시선 탐지는 하지 않는다(기본 꺼짐, 이벤트 없음. 계약의 유형 목록은 그대로).** 다시 켤 때의 선택지(계약 변경 또는 기준값 재조정이라 이 저장소에서 정하지 않음): 웹캠 `maxEdge` 를 640 안팎으로 올린다(대역폭·100KB 한도 영향 확인 필요), 또는 시선은 그림자 모드로 두고 기준값을 실측으로 다시 정한다. 사람 1명·사진 몇 장이라 확정 수치가 아니다.
+
+### 처리량 개선(워커 병렬 처리, 2026-11-26)
+- 병목 실측: 한 프로세스가 프레임을 한 장씩 처리 -> 초당 약 5장(응시자 2명분), GPU 는 놀고 CPU(손·얼굴·포즈, 스레드 경쟁)만 바쁨.
+- 대응: `VISION_WORKERS`(프로세스 풀, `models/pool.py`): 응시자 단위 고정 배정·균등 분배, 워커마다 코어 고정(리눅스)과 스레드 수 제한, 죽은 워커만 재기동. 웹캠 포즈는 3프레임마다만 돌리고 사이에는 직전 값을 재사용(`models.pose_every`, CPU 절약).
+- **이 PC(CPU 만 있음)에서는 효과를 볼 수 없다**(모델 전체가 CPU 라 워커 1개로도 코어가 다 찬다). 가짜 모델 시험과 진짜 모델 동작(오류 없음)만 확인했다. GPU Pod 에서 노트북의 용량 측정으로 효과를 재야 한다.
