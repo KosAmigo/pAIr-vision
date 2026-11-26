@@ -13,7 +13,7 @@ from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
-from pair_vision.api import health, sessions, stream
+from pair_vision.api import health, scan, sessions, stream
 from pair_vision.api.core import ApiError, Core
 from pair_vision.auth.bearer import BearerVerifier
 from pair_vision.config import Settings
@@ -113,4 +113,5 @@ def create_app(
     app.include_router(health.router)
     app.include_router(sessions.router)
     app.include_router(stream.router)
+    app.include_router(scan.router)
     return app
