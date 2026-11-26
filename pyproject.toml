@@ -13,6 +13,16 @@ dependencies = [
     "prometheus-client>=0.20",
 ]
 
+[project.optional-dependencies]
+# 실제 모델(VISION_DETECTOR=real). 가짜 모델·CPU 도커 이미지에는 필요 없다. GPU 이미지는 CUDA 용 torch 를 따로 정한다(이번 범위 밖).
+real = [
+    "torch>=2.4",
+    "transformers>=5.0",
+    "mediapipe>=0.10",
+    "pillow>=10",
+    "numpy>=1.26",
+]
+
 [dependency-groups]
 dev = [
     "pytest>=8",

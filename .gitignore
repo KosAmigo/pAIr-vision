@@ -11,5 +11,5 @@ dist/
 *.engine
 *.dmp
 core
-models/
+/models/
 .venv-bench/

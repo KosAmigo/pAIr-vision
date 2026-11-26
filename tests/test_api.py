@@ -33,7 +33,7 @@ def test_readyz_body(client, auth):
     body = client.get("/readyz", headers=auth).json()
     assert body["ready"] and body["modelsLoaded"] and body["gpu"] is False
     assert body["maxSessions"] == 2 and body["draining"] is False
-    assert body["rulesVersion"] == "2026-11-25.1"
+    assert body["rulesVersion"] == "2026-11-26.1"
 
 
 def test_start_is_idempotent(client, auth):

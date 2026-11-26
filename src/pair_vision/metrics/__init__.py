@@ -20,6 +20,7 @@ class Metrics:
         )
         self.sessions = Gauge("pair_vision_sessions", "활성 세션 수", registry=r)
         self.events = Counter("pair_vision_events_total", "만든 이벤트", ["type", "final"], registry=r)
+        self.shadow_events = Counter("pair_vision_shadow_events_total", "그림자 모드 이벤트(콜백 안 보냄)", ["type"], registry=r)
         self.callback_failures = Counter("pair_vision_callback_failures_total", "콜백 실패", ["reason"], registry=r)
         self.callback_dropped = Counter("pair_vision_callback_dropped_total", "버린 콜백", ["reason"], registry=r)
         self.callback_queue = Gauge("pair_vision_callback_queue_size", "콜백 대기 건수", registry=r)

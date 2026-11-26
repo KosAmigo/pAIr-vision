@@ -9,7 +9,7 @@ import time
 from collections.abc import Callable
 
 from pair_vision.evidence.callback import EventSink
-from pair_vision.evidence.events import build_callback_event
+from pair_vision.evidence.events import SOURCE_BY_TYPE, build_callback_event
 from pair_vision.metrics import Metrics
 from pair_vision.models.base import PHONE, Detector, Frame
 from pair_vision.rules.hands import RuleEvent
@@ -155,6 +155,11 @@ class Pipeline:
 
     def emit(self, session_key: str, events: list[RuleEvent]) -> None:
         for ev in events:
+            if ev.type not in SOURCE_BY_TYPE:  # 계약에 없는 유형(예: MANY_HANDS)은 그림자 모드: 기록만
+                if ev.final:
+                    log.info("그림자 이벤트 %s 지속 %dms", ev.type, ev.duration_ms)
+                    self.metrics.shadow_events.labels(ev.type).inc()
+                continue
             self.metrics.events.labels(ev.type, str(ev.final).lower()).inc()
             self.sink.enqueue(build_callback_event(session_key, ev, self.rules_version))
 

@@ -6,7 +6,22 @@ import hashlib
 
 from pair_vision.rules.hands import RuleEvent
 
-SOURCE_BY_TYPE = {"HANDS_OUT": "PHONE_CAM", "HAND_OUT_ONE": "PHONE_CAM"}
+# TABLET·NOTE·SMARTWATCH 는 휴대폰 채널(PHONE_CAM)로만 만든다(2026-11-26 확정).
+SOURCE_BY_TYPE = {
+    "HANDS_OUT": "PHONE_CAM",
+    "HAND_OUT_ONE": "PHONE_CAM",
+    "TABLET": "PHONE_CAM",
+    "NOTE": "PHONE_CAM",
+    "SMARTWATCH": "PHONE_CAM",
+    # 웹캠(pcRules 포팅). TABLET·NOTE·SMARTWATCH 는 웹캠에서 만들지 않는다(확정 2026-11-26).
+    "NO_FACE": "PC_CAM",
+    "MULTI_FACE": "PC_CAM",
+    "HEAD_TURN": "PC_CAM",
+    "HEAD_DOWN": "PC_CAM",
+    "GAZE_AWAY": "PC_CAM",
+    "TORSO_SHIFT": "PC_CAM",
+    "TORSO_TURN": "PC_CAM",
+}
 
 
 def make_client_id(session_key: str, event_type: str, started_at_ms: int) -> str:
