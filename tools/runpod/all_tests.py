@@ -157,6 +157,8 @@ def step_env(ctx: Ctx) -> str:
     rc = sh(ctx, [ctx.py, "-m", "pip", "install", "-q", "pytest", "pytest-asyncio", "nvidia-ml-py", "psutil", "huggingface_hub"],
             "02_pip.log", timeout=900)
     if rc != 0:
+        if "No module named pip" in tail(ctx, "02_pip.log", 3):  # pip 없는 가상환경(PC 확인용): 이미 깔린 패키지로 진행
+            return detail + " (pip 없음: 추가 설치 건너뜀)"
         raise RuntimeError(f"pip 설치 실패: {tail(ctx, '02_pip.log')}")
     return detail
 
@@ -254,8 +256,19 @@ def step_capacity(ctx: Ctx) -> str:
     if rc != 0 or not out.with_suffix(".md").exists():
         raise RuntimeError(f"capacity 실패(코드 {rc}): {tail(ctx, '06_capacity.log')}")
     md = out.with_suffix(".md").read_text(encoding="utf-8").splitlines()
-    best = [ln for ln in md if ln.startswith("| ") and "최대 인원" not in ln][:3]
-    return f"{out.name}.md/.csv. 요약 상위: {' / '.join(best)}"
+    failed = [ln for ln in md if "실패:" in ln]
+    if failed:  # capacity.py 는 한 조합이 실패해도 끝까지 돌고 종료 코드 0 이므로 결과 표에서 확인한다
+        raise RuntimeError(f"조합 실패 {len(failed)}건: {failed[0][:200]}. 로그: logs/06_capacity.log")
+    rows: list[str] = []
+    for i, ln in enumerate(md):
+        if ln.startswith("| workers | 배치 | fp16 | 웹캠 | 최대 인원"):  # 맨 위 요약 표
+            for row in md[i + 2 :]:
+                if not row.startswith("|"):
+                    break
+                cells = [c.strip() for c in row.strip("|").split("|")]
+                rows.append(f"w{cells[0]}/배치{cells[1]}/fp16 {cells[2]}/웹캠 {cells[3]}={cells[4]}")
+            break
+    return f"{out.name}.md/.csv. 최대 인원: {', '.join(rows[:6])}"
 
 
 # --- ⑦ 정확도 평가 ---

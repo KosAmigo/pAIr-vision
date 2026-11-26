@@ -125,7 +125,7 @@ class Sampler(threading.Thread):
     def __init__(self, interval: float = 0.5) -> None:
         super().__init__(daemon=True)
         self.interval = interval
-        self._stop = threading.Event()
+        self._halt = threading.Event()
         self.gpu_util: list[float] = []
         self.gpu_mem: list[float] = []
         self.cpu: list[float] = []
@@ -166,7 +166,7 @@ class Sampler(threading.Thread):
         return None
 
     def run(self) -> None:
-        while not self._stop.wait(self.interval):
+        while not self._halt.wait(self.interval):
             try:
                 gpu = self._read_gpu()
                 if gpu:
@@ -178,7 +178,7 @@ class Sampler(threading.Thread):
                 self.cpu.append(self._psutil.cpu_percent(interval=None))
 
     def finish(self) -> None:
-        self._stop.set()
+        self._halt.set()
         self.join(timeout=2)
 
 
@@ -271,7 +271,7 @@ async def simulate(detector: Detector, examinees: int, duration: float, warmup: 
             try:
                 dets = await detector.run_async(batch)
             except Exception as err:  # noqa: BLE001 - 한 번 실패해도 측정은 계속, 마지막 오류만 남긴다
-                stats.errors = repr(err)  # type: ignore[attr-defined]
+                stats.errors = f"실패: {err!r}"[:120]  # type: ignore[attr-defined]
                 continue
             now = time.monotonic()
             for d in dets:

@@ -189,3 +189,5 @@ $env:VISION_RULES_PATH = "configs/rules.local-cpu.yaml"    # CPU 전용(아래 �
 ### 방 스캔 `POST /v1/scan`
 
 `Authorization: Bearer`, multipart 필드 `images`(파일 이름이 사진 이름: `h00`~`h11` `v0`~`v4` `m_front` `m_left` `m_back` `m_right` `m_floor` `m_ceiling`), 최대 24장·장당 400KB·JPEG. 응답은 `items`(사진별 `persons` `phones` `monitors` `laptops` `books` `tablets`, `objects` 의 `box` 는 0~1), `summary`(사진 한 장 기준 최댓값), `verdict`(`PASS`/`WARN`, 사유 `MULTI_PERSON` `PHONE` `MULTI_MONITOR` `BOOK` `TABLET` 과 해당 사진 이름), `ms`. `MULTI_MONITOR` 는 한 장 안에서 tv+laptop 이 2개 이상일 때만. 오류는 400 `BAD_SCAN`. D-FINE(person·cell phone·tv·laptop·book)와 OWLv2(`a tablet`)를 묶음으로 쓰고, 가짜 모델은 JPEG 안 `SCAN:person,tv` 표식으로 시험한다.
+
+RunPod 에서 모든 시험을 노트북 하나로 돌리는 방법(번들 만들기 `tools/runpod/make_bundle.py`, Run All, 결과 zip): `ops/runbook.md` §6-5. 예전 `tools/bench/runpod_bench.ipynb` 는 이것으로 대체됐다(지우지는 않음).

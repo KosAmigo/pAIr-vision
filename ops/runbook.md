@@ -77,3 +77,42 @@ RunPod PyTorch 템플릿 Pod 의 JupyterLab 에 총괄 노트북을 복사해 �
 - 코드·가상환경·모델은 `/workspace` 가 아니라 홈 아래 `~/pair-vision-work` 에 둔다(`/workspace` 권한 문제 회피). 서버 키 같은 작은 설정 파일만 `/workspace/.pair-vision/env.json` 에 저장한다. Pod 를 새로 만들면 압축 해제와 파이썬 패키지 설치를 다시 한다.
 - 새 버전을 배포하려면 zip 과 노트북을 다시 만들어 교체한다(zip 의 크기·sha256 이 노트북에 박혀 있어 둘은 짝이다).
 - RunPod PyTorch 템플릿의 torch 가 2.6 미만이면 `bootstrap.sh` 가 가상환경에 torch 2.6(CUDA 맞춤)을 추가로 설치한다.
+
+### 6-5. 총괄 시험 노트북 (`pair_all_tests.ipynb`) - 모든 시험을 한 번에
+
+노트북 하나를 끌어다 놓고 `Run All` 하면 받기 → 환경 → 모든 시험 → 결과 zip 까지 끝난다. 6-1 의 서버 기동용 노트북과 예전 `tools/bench/runpod_bench.ipynb`(모델 속도만)는 이것으로 대체한다(파일은 지우지 않았다).
+
+**만드는 쪽(이 PC)**
+
+| 순서 | 할 일 |
+|---|---|
+| 1 | 코드를 커밋한다(zip 에는 HEAD 만 담긴다) |
+| 2 | `python tools/runpod/make_bundle.py [--photos <폴더>] [--labels labels.csv]` → `dist/pair-all-tests.zip`(약 680MB, 모델 5개 sha256 검증 포함)과 `dist/pair_all_tests.ipynb`(크기·sha256 박힘) |
+| 3 | zip 을 구글 드라이브에 올리고 '링크가 있는 모든 사용자'로 공유 |
+| 4 | 링크를 노트북 맨 위 `DRIVE_URL` 에 넣는다(또는 `--drive-url` 로 미리 박는다) |
+
+사진 폴더는 `phone/` `webcam/` `scan/` 하위 폴더를 쓴다(하위 폴더가 없으면 전체를 휴대폰 사진으로 본다). 사진이 없으면 합성 사진으로 속도만 잰다. `scan/` 사진은 순서대로 `h00`, `h01`... 이름으로 올린다. 정답 CSV 가 있으면 ⑦ 정확도 평가도 돈다.
+
+**돌리는 쪽(RunPod)**
+
+1. Pod 를 켠다(GPU, PyTorch 템플릿).
+2. JupyterLab 에 `pair_all_tests.ipynb` 를 끌어다 놓는다.
+3. 맨 위 설정 칸을 확인한다: `DRIVE_URL`, `QUICK`(처음엔 True, 전체는 False), 단계별 `RUN_*` 스위치.
+4. `Run All`. 한 단계가 실패해도 다음으로 넘어가고, 맨 끝에 단계별 성공/실패 표가 나온다.
+5. `results_<GPU>_<날짜>.zip` 을 내려받고 **Pod 를 정지한다**.
+
+| 단계 | 하는 일 | 결과 파일(zip 안) |
+|---|---|---|
+| ① | zip 받기·크기·sha256 검증·`~/pair-all-tests` 에 풀기(이미 있으면 건너뜀) | |
+| ② | `bootstrap.sh`(apt 라이브러리·가상환경·torch 2.6 미만 처리) + pytest 등 | `logs/02_*.log` |
+| ③ | GPU·패키지 버전·모델 sha256 확인 | `env.txt` |
+| ④ | pytest 전체 | `logs/04_pytest.log` |
+| ⑤ | 모델 속도 비교 | `compare.md/json` |
+| ⑥ | 용량 측정(QUICK 이면 1조합) | `capacity_<GPU>.md/csv` |
+| ⑦ | 정확도 평가(labels.csv 있을 때) | `eval.md/csv` |
+| ⑧ | 실제 모델 서버를 띄워 `/v1/scan` 호출(+잘못된 요청 400 확인) | `scan.json` |
+| ⑨ | replay + sink 로 스트림·콜백 재생 | `replay.md`, `logs/sink.log` |
+| ⑩ | 요약과 결과 zip | `summary.md` |
+
+- GPU 가 없으면 ③ 이 실패로 표시되고 GPU 시험은 건너뛴다(PC 확인용은 `ALLOW_CPU = True`).
+- `/workspace` 를 쓰지 않고 홈 아래(`~/pair-all-tests`, `~/pair-vision-work`)에 푼다. Pod 를 새로 만들면 다시 받는다.
