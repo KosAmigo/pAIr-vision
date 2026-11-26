@@ -49,3 +49,6 @@
 5. **확인**: 모델 적재에 수십 초. `GET /healthz`(인증 없음) → 200, `GET /readyz`(Bearer `VISION_API_KEY`) → `modelsLoaded:true` **`gpu:true`**. `gpu:false` 면 GPU 가 안 잡힌 것(로그 확인, 위 1번 베이스 이미지 대안).
 6. **재생 시험**(백엔드 없이): 이 PC 에서 `tools/replay/replay.py --url https://<pod 주소> --api-key <키> --photos <사진 폴더> --photo-names 1.png --duration 30` 를 돌려 `/metrics` 의 `pair_vision_frame_latency_seconds`(OWLv2 가 있는 프레임 포함)와 이벤트 수를 본다. 콜백은 백엔드 대신 `tools/replay/sink.py` 주소로 받아 서명 검증을 확인할 수 있다.
 7. **하지 않는 것**: 백엔드 스위치는 켜지 않는다(로컬 시험 → 배포 테스트 → 롤백 순서, 설계 §14). 사진·키·콜백 비밀을 로그나 채팅에 남기지 않는다.
+
+### 6-1. 노트북으로 한 번에 (`tools/runpod/runpod_server.ipynb`)
+RunPod PyTorch 템플릿 Pod 의 JupyterLab 에 이 파일을 올려 위에서부터 실행한다: 코드 받기(`git clone`, 비공개면 토큰을 물어봄) → `pip install -e ".[real]"` → 모델 5개 내려받기(Hugging Face·Google)와 `models.lock` sha256 검증 → 서버 실행 → `gpu` 확인 → 재생 시험(사진이 없으면 합성 이미지로 속도만) → 종료. **노트북은 GitHub 의 `main` 을 받으므로 먼저 이 저장소를 푸시해 둬야 한다.** 사진·응시자 실사진은 노트북에 들어 있지 않다. GPU 에서는 아직 돌려 보지 못했다.
