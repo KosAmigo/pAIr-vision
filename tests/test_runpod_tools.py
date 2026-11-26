@@ -89,12 +89,12 @@ def test_step_extra_downloads_into_persistent_folder(tmp_path, monkeypatch):
     with zipfile.ZipFile(src, "w") as z:
         z.writestr("extra/labels.csv", "file,channel\n")
         z.writestr("extra/coco/c.jpg", b"jpg")
-    fake = types.SimpleNamespace(download=lambda url, out, **kw: Path(out).write_bytes(src.read_bytes()))
+    fake = types.SimpleNamespace(download=lambda *a, **kw: Path(kw["output"]).write_bytes(src.read_bytes()) if kw.get("id") == "x" else None)
     monkeypatch.setitem(sys.modules, "gdown", fake)
     monkeypatch.setattr(T.subprocess, "run", lambda *a, **k: None)
     ws = tmp_path / "ws" / "photos"
     monkeypatch.setattr(T, "PHOTO_ROOTS", ("photos", str(ws)))
     ctx = T.Ctx(tmp_path / "pair-all-tests")
-    msg = T.step_extra(ctx, "https://drive.google.com/x", src.stat().st_size, T._sha256(src))
+    msg = T.step_extra(ctx, "https://drive.google.com/file/d/x/view?usp=drive_link", src.stat().st_size, T._sha256(src))
     assert (ws / "extra" / "labels.csv").is_file() and "1장" in msg
     assert "이미 있음" in T.step_extra(ctx, "https://drive.google.com/x")  # 두 번째는 받지 않는다

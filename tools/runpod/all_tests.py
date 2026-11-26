@@ -11,6 +11,7 @@ import contextlib
 import json
 import os
 import platform
+import re
 import shutil
 import socket
 import subprocess
@@ -165,7 +166,9 @@ def step_extra(ctx: Ctx, url: str = "", size: int = 0, sha: str = "") -> str:
 
     ctx.work.mkdir(parents=True, exist_ok=True)
     zip_path = ctx.work / "extra.zip"
-    gdown.download(url, str(zip_path), quiet=False, fuzzy=True)
+    m = re.search(r"/d/([\w-]+)|[?&]id=([\w-]+)", url)  # fuzzy 없이 링크에서 파일 ID 를 꺼낸다
+    file_id = (m.group(1) or m.group(2)) if m else url  # 링크 대신 ID 만 넣어도 된다
+    gdown.download(id=file_id, output=str(zip_path), quiet=False)
     if not zip_path.is_file():
         raise RuntimeError("extra.zip 을 받지 못함. 링크가 '링크가 있는 모든 사용자' 공유인지 확인")
     got = zip_path.stat().st_size
