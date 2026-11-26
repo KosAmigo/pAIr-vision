@@ -62,3 +62,12 @@ RunPod PyTorch 템플릿 Pod 의 JupyterLab 에 이 파일을 올려 위에서�
 | `PAIR_SERVER_VISION_ENABLED` | **`false`** 로 두고 시작(테스트 회차에서만 켠다) |
 - 서버 → 백엔드 콜백 주소 `VISION_CALLBACK_URL` 은 백엔드의 `/internal/vision/events` 전체 주소(RunPod 에서 닿는 공개 주소).
 - **현재 백엔드에는 실제 추론 서버 클라이언트(`/v1/stream`·REST 호출)가 없고 가짜 `StubInferenceClient` 만 있다**(`infra/ai/InferenceClient.java` 주석). 그 구현이 들어가기 전에는 백엔드↔서버 종단 연결이 불가능하다. 그 전까지의 확인은 노트북 6번 칸(서버 단독 재생 시험)과 콜백은 `tools/replay/sink.py` 로 한다. RunPod 프록시가 WebSocket 을 통과시키는지는 노트북 7번 칸이 확인한다.
+
+### 6-3. Pod 를 켤 때마다 라이브러리·모델을 다시 받지 않기 (영구 볼륨 + 스크립트)
+- **원인**: Pod 를 다시 켜면 컨테이너 디스크가 초기화되어 apt 로 깐 시스템 라이브러리(libEGL·libxcb 등)와 pip 로 깐 패키지가 사라진다. 영구 볼륨(`/workspace`)만 남는다. **Pod 를 만들 때 Volume(영구 저장소)을 반드시 붙인다.**
+- **해결**: `tools/runpod/bootstrap.sh` (멱등): ① 빠진 시스템 라이브러리만 apt 로 설치(수 초) ② `/workspace/venv-vision` 가상환경(Pod 의 torch 재사용)과 ③ 모델 5개를 영구 볼륨에 한 번만 설치·검증하고 다음부터 건너뜀(`pyproject.toml`·`uv.lock` 이 바뀌면 재설치). 리눅스 컨테이너에서 "처음 설치 약 5분 → 새 컨테이너로 재기동 → 가상환경·모델 건너뛰고 서버 기동(readyz `modelsLoaded:true`)"까지 확인했다. GPU 는 미검증.
+- **실행 방법 두 가지**
+  1. 노트북 `tools/runpod/runpod_server.ipynb` 위에서부터 실행(3번 칸이 bootstrap.sh 를 호출).
+  2. 노트북 없이: Pod 터미널에서 `git clone` 후 `VISION_API_KEY=<키> bash tools/runpod/start.sh` (RunPod 템플릿의 Container Start Command 로 `bash /workspace/pAIr-vision/tools/runpod/start.sh` 를 줘도 된다. 콜백을 쓰면 `VISION_CALLBACK_URL`·`VISION_CALLBACK_SECRET` 도 환경 변수로).
+- 코드를 갱신하려면 `git -C /workspace/pAIr-vision pull` 후 다시 실행. 새 모델이나 패키지 변경은 위 스크립트가 알아서 반영한다.
+- 이 방식도 첫 기동은 느리다(패키지 수 GB + 모델 약 700MB). 첫 기동을 없애려면 도커 이미지에 다 넣어 레지스트리에 올리는 방식(§1·§6)이 더 낫다.
