@@ -46,7 +46,7 @@ docker compose --profile real up --build vision-real     # CPU 로 확인. GPU �
 docker build --build-arg UV_EXTRAS="--extra real" --build-arg BASE_IMAGE=<CUDA 런타임+Python 3.12 이미지> -t pair-vision:gpu .   # RunPod 용
 ```
 
-> 실제 모델 도커 이미지는 **빌드·실행해 보지 못했다**(이 PC 에서 torch 이미지를 받지 않음). RunPod GPU 로 올리기 전에 한 번 빌드해 `/readyz` 의 `modelsLoaded`·`gpu` 를 확인해야 한다.
+> 실제 모델 이미지(`UV_EXTRAS="--extra real"`, 약 19.6GB)는 이 PC(Docker Desktop, CPU)에서 빌드해 `/readyz` `modelsLoaded:true` 와 사진 재생(`TABLET`·`SMARTWATCH` 이벤트, 분석 실패 0)까지 확인했다. 빌드로 찾아 고친 것: 시스템 라이브러리(`libegl1` `libgles2` `libxcb1` 등)와 `scipy`(OWLv2 전처리). **GPU(CUDA 베이스 이미지)로는 아직 빌드·실행하지 못했다** - RunPod 에서 `gpu:true` 를 확인해야 한다. Git Bash 에서 `docker run -e VISION_MODELS_DIR=/models` 를 쓸 때는 `MSYS_NO_PATHCONV=1` 이 필요하다(경로가 `C:/Program Files/Git/models` 로 바뀐다).
 
 콜백 수신기와 부하 재생기까지 보려면:
 

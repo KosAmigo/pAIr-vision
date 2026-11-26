@@ -21,6 +21,7 @@ real = [
     "mediapipe>=0.10",
     "pillow>=10",
     "numpy>=1.26",
+    "scipy>=1.11",  # transformers OWLv2 이미지 전처리가 요구한다(없으면 컨테이너에서 OWLv2 실패)
 ]
 
 [dependency-groups]

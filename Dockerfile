@@ -19,6 +19,9 @@ COPY src ./src
 COPY configs ./configs
 RUN uv sync --frozen --no-dev ${UV_EXTRAS}
 
+# 실제 모델(mediapipe 가 opencv 를 끌고 옴)은 슬림 이미지에 없는 시스템 라이브러리가 필요하다(libxcb 등). 가짜 모델 이미지는 건너뛴다.
+RUN if [ -n "${UV_EXTRAS}" ]; then       apt-get update && apt-get install -y --no-install-recommends libgl1 libegl1 libgles2 libglib2.0-0 libxcb1 libsm6 libxext6 libxrender1       && rm -rf /var/lib/apt/lists/*;     fi
+
 RUN useradd --system --uid 10001 vision
 USER vision
 
