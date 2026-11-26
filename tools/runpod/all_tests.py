@@ -254,8 +254,8 @@ def require_ready(ctx: Ctx) -> None:
 # --- ④ pytest ---
 def step_pytest(ctx: Ctx) -> str:
     env = ctx.env(VISION_MODELS_DIR=str(ctx.models))
-    if has_real_photos(ctx):
-        env["VISION_TEST_PHOTOS"] = str(photo_dirs(ctx)["phone"])
+    # tests/test_real_models.py 는 특정 책상 사진 8장(1.png~)을 가정하므로 임의의 사진을 넘기지 않는다(그 시험은 건너뜀).
+    # 실제 모델 동작은 ⑤⑥⑧⑨ 단계가 확인한다.
     rc = sh(ctx, [ctx.py, "-m", "pytest", "-q", "-p", "no:cacheprovider", "-rs"], "04_pytest.log", env=env, timeout=3600)
     summary = tail(ctx, "04_pytest.log", 2)
     if rc != 0:
