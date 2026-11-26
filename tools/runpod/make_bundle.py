@@ -86,9 +86,11 @@ def build_zip(out: Path, models: Path, photos: Path | None, labels: Path | None)
         code_zip.unlink(missing_ok=True)
 
 
-def fill_notebook(template: Path, out: Path, size: int, sha: str, drive_url: str) -> None:
+def fill_notebook(template: Path, out: Path, size: int, sha: str, drive_url: str,
+                  extra: tuple[int, str, str] = (0, "", "")) -> None:
     nb = json.loads(template.read_text(encoding="utf-8"))
-    values = {"ZIP_BYTES": str(size), "ZIP_SHA256": json.dumps(sha), "DRIVE_URL": json.dumps(drive_url)}
+    values = {"ZIP_BYTES": str(size), "ZIP_SHA256": json.dumps(sha), "DRIVE_URL": json.dumps(drive_url),
+              "EXTRA_ZIP_BYTES": str(extra[0]), "EXTRA_ZIP_SHA256": json.dumps(extra[1]), "EXTRA_DRIVE_URL": json.dumps(extra[2])}
     hit: set[str] = set()
     for cell in nb["cells"]:
         if cell["cell_type"] != "code":
@@ -114,6 +116,8 @@ def main() -> int:
     ap.add_argument("--photos", type=Path, default=None, help="(선택) 사진 폴더(하위에 phone/ webcam/ scan/ extra/ 가능). 없으면 노트북이 RunPod 의 /workspace/photos 를 찾는다")
     ap.add_argument("--labels", type=Path, default=None, help="정답 CSV(tools/eval 형식)")
     ap.add_argument("--drive-url", default="", help="구글 드라이브 공유 링크(없으면 노트북이 실행할 때 물어본다)")
+    ap.add_argument("--extra-zip", type=Path, default=None, help="(선택) 공개 정답 사진 extra.zip. 크기·sha256 을 노트북에 박는다(zip 에는 넣지 않음)")
+    ap.add_argument("--extra-drive-url", default="", help="extra.zip 의 구글 드라이브 공유 링크")
     ap.add_argument("--skip-model-download", action="store_true", help="모델이 이미 있으면 받기 단계를 건너뜀(검증은 함)")
     args = ap.parse_args()
 
@@ -134,7 +138,13 @@ def main() -> int:
     build_zip(zip_path, args.models_dir, args.photos, args.labels)
     size, sha = zip_path.stat().st_size, sha256_file(zip_path)
     nb_path = args.out / NOTEBOOK_NAME
-    fill_notebook(TEMPLATE, nb_path, size, sha, args.drive_url)
+    extra = (0, "", args.extra_drive_url)
+    if args.extra_zip is not None:
+        if not args.extra_zip.is_file():
+            raise SystemExit(f"extra.zip 이 없습니다: {args.extra_zip}")
+        extra = (args.extra_zip.stat().st_size, sha256_file(args.extra_zip), args.extra_drive_url)
+        print(f"extra.zip {extra[0]:,} 바이트, sha256 {extra[1]}")
+    fill_notebook(TEMPLATE, nb_path, size, sha, args.drive_url, extra)
     print(f"\n{zip_path}\n  크기 {size:,} 바이트 ({size / 1e6:.0f}MB)\n  sha256 {sha}\n{nb_path}")
     print("\n다음: zip 을 구글 드라이브에 올리고 '링크가 있는 모든 사용자'로 공유 -> 링크를 노트북 맨 위 DRIVE_URL 에 넣기"
           + ("" if not args.drive_url else " (이미 박았음)"))

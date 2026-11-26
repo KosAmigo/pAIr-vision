@@ -123,6 +123,65 @@ def synthetic_photos(ctx: Ctx, count: int = 8) -> Path:
 PHOTO_ROOTS = ("photos", "/workspace/photos")  # 찾는 순서: zip 안 photos/ -> /workspace/photos
 
 
+def _writable(folder: Path) -> bool:
+    """쓰기를 실제로 시험한다(/workspace 는 권한이 애매하다)."""
+    try:
+        folder.mkdir(parents=True, exist_ok=True)
+        probe = folder / ".write-test"
+        probe.write_bytes(b"")
+        probe.unlink()
+        return True
+    except OSError:
+        return False
+
+
+def _sha256(path: Path) -> str:
+    import hashlib
+
+    digest = hashlib.sha256()
+    with path.open("rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def step_extra(ctx: Ctx, url: str = "", size: int = 0, sha: str = "") -> str:
+    """공개 정답 사진(extra.zip)을 구글 드라이브에서 받아 사진 폴더의 extra/ 로 푼다.
+
+    어느 사진 폴더에든 extra/labels.csv 가 이미 있으면 받지 않는다. 풀 곳은 /workspace/photos(Pod 를 꺼도 남음)를
+    먼저 쓰고, 쓰기가 안 되면 zip 안 photos/ 로 대체한다.
+    """
+    roots = [Path(r) if Path(r).is_absolute() else ctx.root / r for r in PHOTO_ROOTS]
+    have = next((r / "extra" for r in roots if (r / "extra" / "labels.csv").is_file()), None)
+    if have is not None:
+        return f"이미 있음, 받지 않음: {have} ({len(images_in(have))}장)"
+    if not url.startswith("http"):
+        raise Skip("EXTRA_DRIVE_URL 이 비어 있음(공개 사진 없이 진행)")
+    target = next((r for r in reversed(roots) if _writable(r)), None)
+    if target is None:
+        raise RuntimeError(f"사진을 풀 수 있는 폴더가 없음: {[str(r) for r in roots]}")
+    subprocess.run([ctx.py, "-m", "pip", "install", "-q", "gdown"], check=False)
+    import gdown
+
+    ctx.work.mkdir(parents=True, exist_ok=True)
+    zip_path = ctx.work / "extra.zip"
+    gdown.download(url, str(zip_path), quiet=False, fuzzy=True)
+    if not zip_path.is_file():
+        raise RuntimeError("extra.zip 을 받지 못함. 링크가 '링크가 있는 모든 사용자' 공유인지 확인")
+    got = zip_path.stat().st_size
+    if size and got != size:
+        raise RuntimeError(f"extra.zip 크기가 다름({got:,} != {size:,})")
+    if sha and _sha256(zip_path) != sha:
+        raise RuntimeError("extra.zip sha256 이 다름")
+    with zipfile.ZipFile(zip_path) as z:
+        z.extractall(target)  # zip 안이 extra/... 구조
+    zip_path.unlink()
+    ctx._photo_dirs = None  # type: ignore[attr-defined]
+    n = len(images_in(target / "extra"))
+    note = "" if target == roots[-1] else " (/workspace/photos 에 쓸 수 없어 대체 폴더 사용)"
+    return f"{got / 1e6:.0f}MB 받아 {target / 'extra'} 에 풂 ({n}장){note}"
+
+
 def photo_root(ctx: Ctx) -> Path | None:
     for r in PHOTO_ROOTS:
         base = Path(r) if Path(r).is_absolute() else ctx.root / r

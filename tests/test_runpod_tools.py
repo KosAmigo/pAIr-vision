@@ -61,3 +61,40 @@ def test_team_summary_with_and_without_results(tmp_path):
     assert "server 10명 vs off 20명" in text
     assert "hands 35.0ms" in text
     assert "WARN" in text and "PHONE" in text
+
+
+def test_step_extra_skips_when_already_present(tmp_path, monkeypatch):
+    ctx = T.Ctx(tmp_path / "pair-all-tests")
+    monkeypatch.setattr(T, "PHOTO_ROOTS", ("photos", str(tmp_path / "ws" / "photos")))
+    png(tmp_path / "ws" / "photos" / "extra" / "oi_1.jpg")
+    (tmp_path / "ws" / "photos" / "extra" / "labels.csv").write_text("file,channel\n", encoding="utf-8")
+    assert "이미 있음" in T.step_extra(ctx, "https://drive.google.com/x")  # 링크가 있어도 받지 않는다
+
+
+def test_step_extra_without_url_is_skip(tmp_path, monkeypatch):
+    import pytest
+
+    ctx = T.Ctx(tmp_path / "pair-all-tests")
+    monkeypatch.setattr(T, "PHOTO_ROOTS", ("photos", str(tmp_path / "ws" / "photos")))
+    with pytest.raises(T.Skip):
+        T.step_extra(ctx, "")
+
+
+def test_step_extra_downloads_into_persistent_folder(tmp_path, monkeypatch):
+    import sys
+    import types
+    import zipfile
+
+    src = tmp_path / "src.zip"
+    with zipfile.ZipFile(src, "w") as z:
+        z.writestr("extra/labels.csv", "file,channel\n")
+        z.writestr("extra/coco/c.jpg", b"jpg")
+    fake = types.SimpleNamespace(download=lambda url, out, **kw: Path(out).write_bytes(src.read_bytes()))
+    monkeypatch.setitem(sys.modules, "gdown", fake)
+    monkeypatch.setattr(T.subprocess, "run", lambda *a, **k: None)
+    ws = tmp_path / "ws" / "photos"
+    monkeypatch.setattr(T, "PHOTO_ROOTS", ("photos", str(ws)))
+    ctx = T.Ctx(tmp_path / "pair-all-tests")
+    msg = T.step_extra(ctx, "https://drive.google.com/x", src.stat().st_size, T._sha256(src))
+    assert (ws / "extra" / "labels.csv").is_file() and "1장" in msg
+    assert "이미 있음" in T.step_extra(ctx, "https://drive.google.com/x")  # 두 번째는 받지 않는다
