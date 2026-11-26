@@ -7,8 +7,16 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-WORK="${WORK:-/workspace}"
-[ -d "$WORK" ] || WORK="$HOME"
+pick_work() {  # 쓸 수 있는 첫 폴더: 지정값 > /workspace > /runpod-volume > 홈 > 현재 폴더
+  local c
+  for c in "${WORK:-}" /workspace /runpod-volume "${HOME:-}" "$PWD"; do
+    [ -n "$c" ] || continue
+    if mkdir -p "$c" 2>/dev/null && touch "$c/.write-test" 2>/dev/null; then rm -f "$c/.write-test"; echo "$c"; return 0; fi
+  done
+  echo "쓸 수 있는 폴더가 없습니다" >&2; return 1
+}
+WORK="$(pick_work)"
+case "$WORK" in /workspace|/runpod-volume) ;; *) echo "경고: $WORK 는 영구 볼륨이 아닐 수 있다 - Pod 를 다시 켜면 처음부터 다시 설치한다" >&2 ;; esac
 VENV="${VISION_VENV:-$WORK/venv-vision}"
 MODELS="${VISION_MODELS_DIR:-$ROOT/models}"
 PY="${PYTHON:-python3}"
