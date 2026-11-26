@@ -50,8 +50,8 @@
 6. **재생 시험**(백엔드 없이): 이 PC 에서 `tools/replay/replay.py --url https://<pod 주소> --api-key <키> --photos <사진 폴더> --photo-names 1.png --duration 30` 를 돌려 `/metrics` 의 `pair_vision_frame_latency_seconds`(OWLv2 가 있는 프레임 포함)와 이벤트 수를 본다. 콜백은 백엔드 대신 `tools/replay/sink.py` 주소로 받아 서명 검증을 확인할 수 있다.
 7. **하지 않는 것**: 백엔드 스위치는 켜지 않는다(로컬 시험 → 배포 테스트 → 롤백 순서, 설계 §14). 사진·키·콜백 비밀을 로그나 채팅에 남기지 않는다.
 
-### 6-1. 노트북으로 한 번에 (`tools/runpod/runpod_server.ipynb`)
-RunPod PyTorch 템플릿 Pod 의 JupyterLab 에 이 파일을 올려 위에서부터 실행한다: 코드 받기(`git clone`, 비공개면 토큰을 물어봄) → `pip install -e ".[real]"` → 모델 5개 내려받기(Hugging Face·Google)와 `models.lock` sha256 검증 → 서버 실행 → `gpu` 확인 → 재생 시험(사진이 없으면 합성 이미지로 속도만) → 종료. **노트북은 GitHub 의 `main` 을 받으므로 먼저 이 저장소를 푸시해 둬야 한다.** 사진·응시자 실사진은 노트북에 들어 있지 않다. GPU 에서는 아직 돌려 보지 못했다.
+### 6-1. 노트북으로 한 번에 (총괄 노트북, 저장소 밖 파일)
+RunPod PyTorch 템플릿 Pod 의 JupyterLab 에 총괄 노트북을 복사해 위에서부터 실행한다: 코드 받기(`git clone`, 비공개면 토큰을 물어봄) → `pip install -e ".[real]"` → 모델 5개 내려받기(Hugging Face·Google)와 `models.lock` sha256 검증 → 서버 실행 → `gpu` 확인 → 재생 시험(사진이 없으면 합성 이미지로 속도만) → 종료. **노트북은 GitHub 의 `main` 을 받으므로 먼저 이 저장소를 푸시해 둬야 한다.** 사진·응시자 실사진은 노트북에 들어 있지 않다. GPU 에서는 아직 돌려 보지 못했다.
 
 ### 6-2. 백엔드 연결 (백엔드 `feat/server-vision` 의 `application.yml` 확인 결과)
 | 백엔드 환경 변수 | 넣을 값 (서버 쪽 대응) |
@@ -67,7 +67,7 @@ RunPod PyTorch 템플릿 Pod 의 JupyterLab 에 이 파일을 올려 위에서�
 - **원인**: Pod 를 다시 켜면 컨테이너 디스크가 초기화되어 apt 로 깐 시스템 라이브러리(libEGL·libxcb 등)와 pip 로 깐 패키지가 사라진다. 영구 볼륨(`/workspace`)만 남는다. **Pod 를 만들 때 Volume(영구 저장소)을 반드시 붙인다.**
 - **해결**: `tools/runpod/bootstrap.sh` (멱등): ① 빠진 시스템 라이브러리만 apt 로 설치(수 초) ② `/workspace/venv-vision` 가상환경(Pod 의 torch 재사용)과 ③ 모델 5개를 영구 볼륨에 한 번만 설치·검증하고 다음부터 건너뜀(`pyproject.toml`·`uv.lock` 이 바뀌면 재설치). 리눅스 컨테이너에서 "처음 설치 약 5분 → 새 컨테이너로 재기동 → 가상환경·모델 건너뛰고 서버 기동(readyz `modelsLoaded:true`)"까지 확인했다. GPU 는 미검증.
 - **실행 방법 두 가지**
-  1. 노트북 `tools/runpod/runpod_server.ipynb` **총괄 노트북**: Pod 를 켤 때마다 `Run All` 한 번이면 코드 받기/갱신 → 환경 준비(bootstrap.sh) → 서버 실행 → 외부 접속 확인 → 백엔드 값 출력까지 한다. 키·콜백 정보는 처음 한 번만 묻고 `/workspace/.pair-vision.env`(본인만 읽기)에 저장해 다음부터 같은 값을 쓴다. 사진 재생 시험(`RUN_TEST`)과 서버 끄기(`STOP`)는 스위치를 바꿔야 실행된다.
+  1. **총괄 노트북**(저장소에 넣지 않고 별도 파일로 전달해 RunPod 의 Jupyter 에 복사해 쓴다. 노트북이 저장소를 스스로 `git clone`/`git pull` 한다): Pod 를 켤 때마다 `Run All` 한 번이면 코드 받기/갱신 → 환경 준비(bootstrap.sh) → 서버 실행 → 외부 접속 확인 → 백엔드 값 출력까지 한다. 키·콜백 정보는 처음 한 번만 묻고 `/workspace/.pair-vision.env`(본인만 읽기)에 저장해 다음부터 같은 값을 쓴다. 사진 재생 시험(`RUN_TEST`)과 서버 끄기(`STOP`)는 스위치를 바꿔야 실행된다.
   2. 노트북 없이: Pod 터미널에서 `git clone` 후 `VISION_API_KEY=<키> bash tools/runpod/start.sh` (RunPod 템플릿의 Container Start Command 로 `bash /workspace/pAIr-vision/tools/runpod/start.sh` 를 줘도 된다. 콜백을 쓰면 `VISION_CALLBACK_URL`·`VISION_CALLBACK_SECRET` 도 환경 변수로).
 - 코드를 갱신하려면 `git -C /workspace/pAIr-vision pull` 후 다시 실행. 새 모델이나 패키지 변경은 위 스크립트가 알아서 반영한다.
 - 이 방식도 첫 기동은 느리다(패키지 수 GB + 모델 약 700MB). 첫 기동을 없애려면 도커 이미지에 다 넣어 레지스트리에 올리는 방식(§1·§6)이 더 낫다.
