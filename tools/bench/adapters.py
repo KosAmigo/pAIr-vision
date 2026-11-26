@@ -18,7 +18,7 @@ from .harness import BenchModel, ObjectDet, RawResult
 MODELS_DIR = Path(__file__).resolve().parents[2] / "models"
 
 # COCO 에서 시험 환경에 필요한 물체
-WANTED_COCO = ("keyboard", "mouse", "cell phone", "laptop", "book", "remote")
+WANTED_COCO = ("keyboard", "mouse", "cell phone", "laptop", "book", "remote", "person")
 # open-vocab 에 줄 문장 (설계 §8-1)
 DEFAULT_PROMPTS = (
     "a keyboard",

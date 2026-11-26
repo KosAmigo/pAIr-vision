@@ -35,3 +35,15 @@ uv run python -m tools.bench.compare --images C:\photos\desk --models rtdetr-r18
 ```
 
 가중치·라이브러리가 없는 모델은 건너뛴다. GPU(CUDA) 없는 PC의 수치는 CPU 기준이라 RunPod 용량(M4)으로 환산할 수 없다.
+
+## 정답 라벨 붙이기 (정확도 평가용)
+
+```powershell
+uv run python -m tools.eval.evaluate template --photos C:\photos --out labels.csv   # 사진마다 한 줄인 빈 CSV
+```
+
+- 열: `file`(파일 이름) `channel`(`phone`/`webcam`, 폴더 이름에 webcam 이 있으면 자동) `keyboard` `mouse` `phone` `tablet` `note` `smartwatch`(사진에 **보이면 1, 안 보이면 0**) `hands`(보이는 손 개수) `persons`(사람 수) `faces`(얼굴 수).
+- 칸을 비우면 그 사진·항목은 평가에서 빠진다. 헷갈리는 사진은 비워 둔다(애매한 정답이 점수를 흐린다).
+- 일부만 가려진 물체(손에 반쯤 가린 휴대폰 등)는 사람이 봐서 알아볼 수 있으면 1.
+- 평가: `uv run python -m tools.bench.compare --images C:\photos --models dfine-s,owlv2,mediapipe-hands --hand-conf 0.5,0.3,0.1 --json out.json` 으로 결과를 만들고 `uv run python -m tools.eval.evaluate score --truth labels.csv --results out.json --thresholds 0.2,0.3,0.4,0.5,0.6,0.7 --out eval`. 기준값을 한 번에 훑어 클래스별 precision/recall 표(`eval.md`, `eval.csv`)가 나온다.
+- 빈 양식: `tools/eval/labels.template.csv`.
