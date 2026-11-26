@@ -67,7 +67,7 @@ RunPod PyTorch 템플릿 Pod 의 JupyterLab 에 이 파일을 올려 위에서�
 - **원인**: Pod 를 다시 켜면 컨테이너 디스크가 초기화되어 apt 로 깐 시스템 라이브러리(libEGL·libxcb 등)와 pip 로 깐 패키지가 사라진다. 영구 볼륨(`/workspace`)만 남는다. **Pod 를 만들 때 Volume(영구 저장소)을 반드시 붙인다.**
 - **해결**: `tools/runpod/bootstrap.sh` (멱등): ① 빠진 시스템 라이브러리만 apt 로 설치(수 초) ② `/workspace/venv-vision` 가상환경(Pod 의 torch 재사용)과 ③ 모델 5개를 영구 볼륨에 한 번만 설치·검증하고 다음부터 건너뜀(`pyproject.toml`·`uv.lock` 이 바뀌면 재설치). 리눅스 컨테이너에서 "처음 설치 약 5분 → 새 컨테이너로 재기동 → 가상환경·모델 건너뛰고 서버 기동(readyz `modelsLoaded:true`)"까지 확인했다. GPU 는 미검증.
 - **실행 방법 두 가지**
-  1. 노트북 `tools/runpod/runpod_server.ipynb` 위에서부터 실행(3번 칸이 bootstrap.sh 를 호출).
+  1. 노트북 `tools/runpod/runpod_server.ipynb` **총괄 노트북**: Pod 를 켤 때마다 `Run All` 한 번이면 코드 받기/갱신 → 환경 준비(bootstrap.sh) → 서버 실행 → 외부 접속 확인 → 백엔드 값 출력까지 한다. 키·콜백 정보는 처음 한 번만 묻고 `/workspace/.pair-vision.env`(본인만 읽기)에 저장해 다음부터 같은 값을 쓴다. 사진 재생 시험(`RUN_TEST`)과 서버 끄기(`STOP`)는 스위치를 바꿔야 실행된다.
   2. 노트북 없이: Pod 터미널에서 `git clone` 후 `VISION_API_KEY=<키> bash tools/runpod/start.sh` (RunPod 템플릿의 Container Start Command 로 `bash /workspace/pAIr-vision/tools/runpod/start.sh` 를 줘도 된다. 콜백을 쓰면 `VISION_CALLBACK_URL`·`VISION_CALLBACK_SECRET` 도 환경 변수로).
 - 코드를 갱신하려면 `git -C /workspace/pAIr-vision pull` 후 다시 실행. 새 모델이나 패키지 변경은 위 스크립트가 알아서 반영한다.
 - 이 방식도 첫 기동은 느리다(패키지 수 GB + 모델 약 700MB). 첫 기동을 없애려면 도커 이미지에 다 넣어 레지스트리에 올리는 방식(§1·§6)이 더 낫다.
