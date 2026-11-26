@@ -13,7 +13,17 @@ from __future__ import annotations
 import re
 from collections.abc import Sequence
 
-from pair_vision.models.base import PHONE, Box, Detection, Detector, Frame, HandDet
+from pair_vision.models.base import (
+    PHONE,
+    Box,
+    Detection,
+    Detector,
+    Frame,
+    HandDet,
+    ObjectDet,
+    Shoulders,
+    WebcamFeatures,
+)
 
 KEYBOARD = Box(0.20, 0.50, 0.60, 0.90)
 MOUSE = Box(0.65, 0.60, 0.80, 0.80)
@@ -30,6 +40,27 @@ STATES: dict[str, tuple[tuple[HandDet, ...], bool]] = {
     "ONE_OUT": ((LEFT_ON_KEYBOARD, RIGHT_FAR), True),  # 한 손만 영역 밖
     "ONE_HAND": ((LEFT_ON_KEYBOARD,), True),  # 한 손만 보임
     "NO_DESK": ((LEFT_ON_KEYBOARD, RIGHT_ON_MOUSE), False),
+    "TABLET": ((LEFT_ON_KEYBOARD, RIGHT_ON_MOUSE), True),  # 정상 + 태블릿 보임
+    "NOTE": ((LEFT_ON_KEYBOARD, RIGHT_ON_MOUSE), True),  # 정상 + 노트 보임
+}
+
+# 상태 이름 -> 그 상태에서 보이는 추가 물체(가짜 시나리오·표식 시험용)
+FAKE_OBJECTS: dict[str, ObjectDet] = {
+    "TABLET": ObjectDet("tablet", 0.8, Box(0.1, 0.1, 0.4, 0.3)),
+    "NOTE": ObjectDet("note", 0.7, Box(0.1, 0.1, 0.4, 0.3)),
+}
+
+# 웹캠 가짜 상태(프레임 표식 `FAKE:<이름>`). 표식이 없으면 FRONT(보정 자세와 같은 정면).
+_SH = Shoulders(0.5, 0.7, 0.4)
+WEBCAM_STATES: dict[str, WebcamFeatures] = {
+    "FRONT": WebcamFeatures(1, 0.0, 0.0, 0.0, 0.0, 0.0, _SH),
+    "NO_FACE": WebcamFeatures(0, shoulders=_SH),
+    "MULTI_FACE": WebcamFeatures(2, 0.0, 0.0, 0.0, 0.0, 0.0, _SH),
+    "HEAD_TURN": WebcamFeatures(1, 40.0, 0.0, 0.0, 0.0, 0.0, _SH),
+    "HEAD_DOWN": WebcamFeatures(1, 0.0, 35.0, 0.0, 0.0, 0.0, _SH),
+    "GAZE_AWAY": WebcamFeatures(1, 0.0, 0.0, 0.7, 0.0, 0.0, _SH),
+    "TORSO_SHIFT": WebcamFeatures(1, 0.0, 0.0, 0.0, 0.0, 0.0, Shoulders(0.75, 0.7, 0.4)),
+    "TORSO_TURN": WebcamFeatures(1, 0.0, 0.0, 0.0, 0.0, 0.0, Shoulders(0.5, 0.7, 0.2)),
 }
 
 _MARKER = re.compile(rb"FAKE:([A-Z_]+)")
@@ -84,9 +115,17 @@ class FakeDetector(Detector):
         result: list[Detection] = []
         for frame in frames:
             if frame.channel != PHONE:
-                result.append(Detection(frame.key, frame.channel, frame.seq, frame.recv_ms))
+                match = _MARKER.search(frame.jpeg)
+                name = match.group(1).decode("ascii") if match else "FRONT"
+                result.append(
+                    Detection(
+                        frame.key, frame.channel, frame.seq, frame.recv_ms,
+                        webcam=WEBCAM_STATES.get(name, WEBCAM_STATES["FRONT"]),
+                    )
+                )
                 continue
-            hands, desk = STATES[self._state_for(frame)]
+            state = self._state_for(frame)
+            hands, desk = STATES[state]
             result.append(
                 Detection(
                     key=frame.key,
@@ -97,12 +136,28 @@ class FakeDetector(Detector):
                     mouse=MOUSE,
                     hands=hands,
                     desk_visible=desk,
+                    objects=(FAKE_OBJECTS[state],) if state in FAKE_OBJECTS else (),
                 )
             )
         return result
 
 
-def create_detector(kind: str, scenario: str) -> Detector:
+def create_detector(
+    kind: str,
+    scenario: str,
+    *,
+    models_dir: str = "models",
+    model_rules=None,
+    lock_path: str | None = None,
+    verify: bool = True,
+) -> Detector:
     if kind == "fake":
         return FakeDetector(scenario)
-    raise ValueError(f"지원하지 않는 detector: {kind!r} (실제 모델은 D-6 결정 뒤에 추가)")
+    if kind == "real":
+        from pair_vision.models.real import RealDetector  # torch 등은 load() 에서야 import 된다
+        from pair_vision.rules.config import ModelRules
+
+        return RealDetector(
+            models_dir, model_rules or ModelRules(), lock_path=lock_path, verify=verify
+        )
+    raise ValueError(f"지원하지 않는 detector: {kind!r} (fake | real)")

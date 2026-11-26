@@ -36,7 +36,14 @@ def build_core(
     rules: RulesConfig | None = None,
 ) -> Core:
     rules = rules or load_rules(settings.rules_path)
-    detector = detector or create_detector(settings.detector, settings.fake_scenario)
+    detector = detector or create_detector(
+        settings.detector,
+        settings.fake_scenario,
+        models_dir=settings.models_dir,
+        model_rules=rules.models,
+        lock_path=settings.models_lock_path,
+        verify=settings.verify_models,
+    )
     metrics = Metrics()
     if sink is None:
         if settings.callback_url:

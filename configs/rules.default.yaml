@@ -1,6 +1,6 @@
 # 규칙 값 (계약 §9, 모두 임시값 — 실측 M1~M6 뒤 조정). 배포 없이 이 파일만 바꿔 쓴다.
 # 이벤트의 rulesVersion 에는 아래 version 이 그대로 기록된다. 값을 바꾸면 version 도 올린다.
-version: "2026-11-25.1"
+version: "2026-11-26.1"
 
 profiles:
   default:
@@ -15,3 +15,48 @@ profiles:
     check:
       pass_hold_ms: 3000          # 모든 항목이 연속으로 참이어야 하는 시간
       min_interval_ms: 500        # check 메시지 최소 간격 (최대 초당 2번)
+    # 물체 규칙: 연속으로 보이는 시간(min_ms) 이상이면 이벤트. 설계 문서에 값이 없어 보수적으로 둔 임시값(보고서·README 참조).
+    # tablet·smartwatch 는 OWLv2 가 몇 초 주기로만 보므로 gap_ms 는 models.owl_interval_ms 의 2배 이상이어야 한다.
+    objects:
+      tablet:     { min_ms: 10000, gap_ms: 10000, cooldown_ms: 30000 }
+      note:       { min_ms: 10000, gap_ms: 3000,  cooldown_ms: 30000 }
+      smartwatch: { min_ms: 15000, gap_ms: 10000, cooldown_ms: 60000 }
+      # 손 3개 이상: 계약에 없는 유형(D-7)이라 shadow=true(콜백 없음, 지표·로그만)
+      many_hands: { min_ms: 5000,  gap_ms: 3000,  cooldown_ms: 30000, shadow: true }
+
+    # 웹캠 규칙(프론트 pcRules.ts 포팅). thresholds 는 프론트 PC_THRESHOLDS 와 같다. 지속·쿨다운도 프론트 PC_RULES 와 같고,
+    # gap_ms(끊김 허용)만 서버가 초당 1장을 분석하므로 프레임 2~3장 간격(2.5초)으로 둔 가정값이다.
+    webcam:
+      calibration_min_samples: 3   # 프론트는 5. 초당 1장 x 3초 보정이면 4장쯤 모인다
+      thresholds:
+        yaw_deg: 25
+        pitch_up_deg: 20
+        pitch_down_deg: 25
+        gaze_x: 0.45
+        gaze_down: 0.45
+        blink_ignore: 0.5
+        torso_shift: 0.12
+        torso_width_min: 0.72
+        torso_width_max: 1.35
+      rules:
+        no_face:     { min_ms: 2000, gap_ms: 2500, cooldown_ms: 8000 }
+        multi_face:  { min_ms: 1000, gap_ms: 2500, cooldown_ms: 8000 }
+        head_turn:   { min_ms: 1500, gap_ms: 2500, cooldown_ms: 6000 }
+        head_down:   { min_ms: 5000, gap_ms: 2500, cooldown_ms: 10000 }
+        # 시선은 끈다(2026-11-26 결정): 계약 해상도 400px·q55 에서 신뢰하기 어렵다. 켜려면 enabled: true
+        gaze_away:   { enabled: false, min_ms: 5000, gap_ms: 2500, cooldown_ms: 6000 }
+        torso_shift: { min_ms: 2000, gap_ms: 2500, cooldown_ms: 8000 }
+        torso_turn:  { min_ms: 2000, gap_ms: 2500, cooldown_ms: 8000 }
+
+# 실제 모델 설정(VISION_DETECTOR=real). 점수 기준값은 모두 이 값 이상일 때만 "검출"로 본다.
+models:
+  keyboard_threshold: 0.3    # D-FINE-s, 휴대폰 프레임마다
+  mouse_threshold: 0.4
+  note_threshold: 0.3        # D-FINE-s COCO book (설계 §7-3 에 값 없음: 측정 때 쓴 0.3)
+  tablet_threshold: 0.5      # OWLv2
+  smartwatch_threshold: 0.5
+  phone_threshold: 0.5       # 다른 휴대폰(이벤트 유형 없음 - 기록만)
+  owl_interval_ms: 5000      # OWLv2 를 세션마다 이 간격으로
+  hand_threshold: 0.5        # MediaPipe Hands 감지 기준값
+  max_hands: 4
+  hand_merge_distance: 0.06  # 이보다 가까운 손은 하나로 합침(프레임 비율, 임시값)

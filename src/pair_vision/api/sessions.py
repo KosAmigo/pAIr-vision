@@ -73,6 +73,7 @@ def end(key: str, core: Core = Depends(get_core)) -> dict:
         events = session.end()
         core.pipeline.emit(key, events)
         core.pipeline.mailboxes.drop_key(key)
+        core.detector.forget(key)
         flushed = len(events)
     core.metrics.sessions.set(len(core.registry))
     return {"flushedEvents": flushed}

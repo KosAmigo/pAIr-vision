@@ -24,6 +24,37 @@ services:
       timeout: 5s
       retries: 10
 
+  # 실제 모델(CPU 로 로컬 확인용): docker compose --profile real up --build vision-real
+  #   models/ 폴더(git 제외)를 /models 로 읽기 전용 마운트한다. GPU 는 호스트에 NVIDIA 런타임이 있을 때 deploy 항목의 주석을 푼다.
+  vision-real:
+    profiles: [real]
+    build:
+      context: .
+      args:
+        UV_EXTRAS: "--extra real"
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./models:/models:ro
+    environment:
+      VISION_API_KEY: dev-key
+      VISION_DETECTOR: real
+      VISION_MODELS_DIR: /models
+      VISION_RULES_PATH: ${VISION_RULES_PATH:-configs/rules.default.yaml}
+      VISION_CALLBACK_URL: ${VISION_CALLBACK_URL:-http://sink:9000/internal/vision/events}
+      VISION_CALLBACK_SECRET: dev-callback-secret
+    ulimits:
+      core: 0
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices: [{driver: nvidia, count: 1, capabilities: [gpu]}]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request as u; u.urlopen('http://localhost:8000/healthz', timeout=3)"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+
   sink:
     profiles: [demo]
     image: python:3.12-slim

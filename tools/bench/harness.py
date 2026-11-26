@@ -14,20 +14,11 @@ from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from pair_vision.models.base import Box, Detection, Detector, Frame, HandDet
+from pair_vision.models.base import Box, Detection, Detector, Frame, HandDet, ObjectDet
 
 IMAGE_SUFFIXES = (".jpg", ".jpeg", ".png")
 KEYBOARD_LABELS = ("keyboard",)
 MOUSE_LABELS = ("mouse",)
-
-
-@dataclass(frozen=True)
-class ObjectDet:
-    """모델이 낸 물체 하나. 좌표는 프레임 비율(0~1)."""
-
-    label: str
-    score: float
-    box: Box
 
 
 @dataclass(frozen=True)

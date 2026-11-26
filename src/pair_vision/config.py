@@ -20,6 +20,9 @@ class Settings:
     rules_path: str = "configs/rules.default.yaml"
     detector: str = "fake"
     fake_scenario: str = "normal"
+    models_dir: str = "models"
+    models_lock_path: str = "configs/models.lock"
+    verify_models: bool = True
     state_interval_s: float = 2.0
     max_frame_bytes: int = 256 * 1024
     version: str = "0.1.0"
@@ -44,6 +47,9 @@ class Settings:
             rules_path=env.get("VISION_RULES_PATH", "configs/rules.default.yaml"),
             detector=env.get("VISION_DETECTOR", "fake"),
             fake_scenario=env.get("VISION_FAKE_SCENARIO", "normal"),
+            models_dir=env.get("VISION_MODELS_DIR", "models"),
+            models_lock_path=env.get("VISION_MODELS_LOCK", "configs/models.lock"),
+            verify_models=env.get("VISION_VERIFY_MODELS", "1") not in ("0", "false", "False"),
             state_interval_s=float(env.get("VISION_STATE_INTERVAL_S", "2")),
             max_frame_bytes=int(env.get("VISION_MAX_FRAME_BYTES", str(256 * 1024))),
             version=env.get("VISION_VERSION", "0.1.0"),

@@ -1,3 +1,48 @@
-# 모델 이름·버전·체크섬 (설계 §15-2). 실제 모델·라이선스는 D-6 결정 전이라 비어 있다.
-# 가중치는 저장소에 넣지 않고 볼륨/버킷에 둔다.
-models: []
+# 확정 모델의 이름·출처·라이선스·파일 sha256 (설계 §15-2). 가중치는 저장소에 넣지 않는다.
+# 서버는 시작할 때 models 폴더(VISION_MODELS_DIR)의 파일을 이 sha256 과 대조한다(VISION_VERIFY_MODELS=0 으로 끔).
+# 갱신: python tools/models/make_lock.py
+models:
+- name: dfine-s
+  role: 키보드·마우스·노트(COCO book), 휴대폰 프레임마다
+  repo: ustc-community/dfine-small-coco
+  license: Apache-2.0
+  directory: dfine-small-coco
+  files:
+    config.json: 9f206c4c935c67c957af2f15c3333b4ff224e72b1881bc7bbde9f873edf4448e
+    model.safetensors: a144baff3a27bfd538fe37b11fa8d4fca5744b8c054b5301e7c699a1379cd18f
+    preprocessor_config.json: 7e9e2245806aa3ef068a5321f5eebee3116fa4cec560173231954ffaca930eca
+- name: owlv2
+  role: 태블릿·스마트워치·다른 휴대폰, 세션마다 몇 초 주기
+  repo: google/owlv2-base-patch16-ensemble
+  license: Apache-2.0
+  directory: owlv2-base-patch16-ensemble
+  files:
+    added_tokens.json: e5dc0da35d20111e8ff3fdfc03682beca23d5f94ed74331bce81786b2636a24f
+    config.json: ba9df8c25a4b8461887dd0a93d9252c9cd84697fe8d49a9d8794ce409af9acb2
+    merges.txt: 9fd691f7c8039210e0fced15865466c65820d09b63988b0174bfe25de299051a
+    model.safetensors: e1e130b9e404cf91a75ad45644c1da9d7fa5284085eecc864266a6923efb99e7
+    preprocessor_config.json: cf3e396635b797ee1a464e1b2836e98748f8edac19e89aaa2c93b55ac15b0064
+    special_tokens_map.json: d6e2b9cf664efbad2d22998b8d3da986abcbeed3e0825ad33605c9401f9cf73e
+    tokenizer_config.json: b55cda6198e152ded427c8a9b3faf1cccf27a7fa080697a62f6ff143f511f44f
+    vocab.json: e089ad92ba36837a0d31433e555c8f45fe601ab5c221d4f607ded32d9f7a4349
+- name: mediapipe-hands
+  role: 손 랜드마크
+  repo: https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task
+  license: Apache-2.0 (MediaPipe 코드 기준; 모델 파일 자체 조건은 미확인)
+  directory: hand_landmarker.task
+  files:
+    .: fbc2a30080c3c557093b5ddfc334698132eb341044ccee322ccf8bcf3607cde1
+- name: mediapipe-face
+  role: 웹캠 얼굴 랜드마크·블렌드셰이프·변환 행렬(마일스톤 B)
+  repo: https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task
+  license: Apache-2.0 (MediaPipe 코드 기준; 모델 파일 자체 조건은 미확인)
+  directory: face_landmarker.task
+  files:
+    .: 64184e229b263107bc2b804c6625db1341ff2bb731874b0bcc2fe6544e0bc9ff
+- name: mediapipe-pose-lite
+  role: 웹캠 포즈 랜드마크(어깨, 마일스톤 B)
+  repo: https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task
+  license: Apache-2.0 (MediaPipe 코드 기준; 모델 파일 자체 조건은 미확인)
+  directory: pose_landmarker_lite.task
+  files:
+    .: 59929e1d1ee95287735ddd833b19cf4ac46d29bc7afddbbf6753c459690d574a
