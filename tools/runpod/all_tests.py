@@ -43,6 +43,7 @@ class Ctx:
     gpu_name: str = "cpu"
     results: Path = field(init=False)
     work: Path = field(init=False)
+    extra_names: set = field(default_factory=set)  # photos/extra/ 에서 온 사진 이름(정확도를 출처별로 나누려고)
 
     def __post_init__(self) -> None:
         self.root = Path(self.root)
@@ -119,21 +120,64 @@ def synthetic_photos(ctx: Ctx, count: int = 8) -> Path:
     return out
 
 
+PHOTO_ROOTS = ("photos", "/workspace/photos")  # 찾는 순서: zip 안 photos/ -> /workspace/photos
+
+
+def photo_root(ctx: Ctx) -> Path | None:
+    for r in PHOTO_ROOTS:
+        base = Path(r) if Path(r).is_absolute() else ctx.root / r
+        if images_in(base):
+            return base
+    return None
+
+
 def photo_dirs(ctx: Ctx) -> dict[str, Path]:
-    """phone / webcam / scan 사진 폴더. 하위 폴더가 없고 photos/ 에 바로 사진이 있으면 phone 으로 본다. 없으면 합성."""
-    base = ctx.root / "photos"
-    found: dict[str, Path] = {}
-    for kind in ("phone", "webcam", "scan"):
-        if images_in(base / kind):
-            found[kind] = base / kind
-    if "phone" not in found and any(p.suffix.lower() in IMAGE_SUFFIXES for p in base.glob("*")):
-        found["phone"] = base
-    found.setdefault("phone", synthetic_photos(ctx))
+    """phone / webcam / scan 사진 폴더. 하위 폴더(phone/ webcam/ scan/)가 없으면 폴더 전체를 휴대폰 사진으로 쓴다.
+
+    extra/ 폴더(추가 정답 사진)는 휴대폰 사진에 합친다. 사진이 어디에도 없으면 합성 사진.
+    찾은 사진은 작업 폴더(photo-set)에 모아 한 곳으로 만든다(이름이 겹치면 폴더 이름을 앞에 붙임).
+    """
+    cached = getattr(ctx, "_photo_dirs", None)
+    if cached is not None:
+        return cached
+    root = photo_root(ctx)
+    if root is None:
+        found = {"phone": synthetic_photos(ctx)}
+        ctx._photo_dirs = found  # type: ignore[attr-defined]
+        return found
+    kinds = {k: images_in(root / k) for k in ("phone", "webcam", "scan")}
+    extra = images_in(root / "extra")
+    if not any(kinds.values()):  # 하위 폴더가 없다: extra 를 뺀 전체가 휴대폰 사진
+        kinds["phone"] = [p for p in images_in(root) if (root / "extra") not in p.parents]
+    kinds["phone"] = kinds["phone"] + extra
+    out = ctx.work / "photo-set"
+    shutil.rmtree(out, ignore_errors=True)
+    found = {}
+    for kind, files in kinds.items():
+        if not files:
+            continue
+        (out / kind).mkdir(parents=True, exist_ok=True)
+        for p in files:
+            target = out / kind / p.name
+            if target.exists():
+                target = out / kind / f"{p.parent.name}_{p.name}"
+            shutil.copy2(p, target)
+            if p in extra:
+                ctx.extra_names.add(target.name)
+        found[kind] = out / kind
+    if "phone" not in found:
+        found["phone"] = synthetic_photos(ctx)
+    ctx._photo_dirs = found  # type: ignore[attr-defined]
     return found
 
 
 def has_real_photos(ctx: Ctx) -> bool:
-    return bool(images_in(ctx.root / "photos"))
+    return photo_root(ctx) is not None
+
+
+def find_labels(ctx: Ctx) -> Path | None:
+    roots = [ctx.root] + [Path(r) if Path(r).is_absolute() else ctx.root / r for r in PHOTO_ROOTS]
+    return next((r / "labels.csv" for r in roots if (r / "labels.csv").is_file()), None)
 
 
 def free_port() -> int:
@@ -210,9 +254,8 @@ def require_ready(ctx: Ctx) -> None:
 # --- ④ pytest ---
 def step_pytest(ctx: Ctx) -> str:
     env = ctx.env(VISION_MODELS_DIR=str(ctx.models))
-    photos = photo_dirs(ctx)
     if has_real_photos(ctx):
-        env["VISION_TEST_PHOTOS"] = str(photos["phone"])
+        env["VISION_TEST_PHOTOS"] = str(photo_dirs(ctx)["phone"])
     rc = sh(ctx, [ctx.py, "-m", "pytest", "-q", "-p", "no:cacheprovider", "-rs"], "04_pytest.log", env=env, timeout=3600)
     summary = tail(ctx, "04_pytest.log", 2)
     if rc != 0:
@@ -272,17 +315,45 @@ def step_capacity(ctx: Ctx) -> str:
 
 
 # --- ⑦ 정확도 평가 ---
+def _split_labels(labels: Path, names: set[str], out: Path, keep_in: bool) -> int:
+    """정답 CSV 에서 names 에 있는(keep_in) 또는 없는 사진의 줄만 골라 저장한다. 고른 줄 수를 돌려준다."""
+    import csv
+
+    with labels.open(newline="", encoding="utf-8-sig") as f:
+        reader = csv.DictReader(f)
+        rows = [r for r in reader if (Path(r["file"].strip()).name in names) == keep_in]
+        fields = reader.fieldnames or []
+    with out.open("w", newline="", encoding="utf-8-sig") as f:
+        w = csv.DictWriter(f, fieldnames=fields)
+        w.writeheader()
+        w.writerows(rows)
+    return len(rows)
+
+
 def step_eval(ctx: Ctx) -> str:
-    labels = ctx.root / "labels.csv"
-    if not labels.exists():
-        raise Skip("labels.csv 없음(번들에 --labels 로 넣으면 실행됨)")
+    labels = find_labels(ctx)
+    if labels is None:
+        raise Skip("labels.csv 없음(/workspace/photos/labels.csv 또는 번들 --labels)")
     if not (ctx.results / "compare.json").exists():
         raise Skip("⑤ compare 결과(compare.json)가 없음")
-    rc = sh(ctx, [ctx.py, "-m", "tools.eval.evaluate", "score", "--truth", str(labels), "--results",
-                  str(ctx.results / "compare.json"), "--out", str(ctx.results / "eval")], "07_eval.log")
-    if rc != 0:
-        raise RuntimeError(f"eval 실패(코드 {rc}): {tail(ctx, '07_eval.log')}")
-    return "eval.md / eval.csv"
+    photo_dirs(ctx)  # extra 이름 목록을 채운다
+    parts = {"mine": False}
+    if ctx.extra_names:
+        parts = {"mine": False, "extra": True}
+    done = []
+    for tag, keep_in in parts.items():
+        truth = ctx.results / f"labels_{tag}.csv"
+        n = _split_labels(labels, ctx.extra_names, truth, keep_in)
+        if n == 0:
+            continue
+        rc = sh(ctx, [ctx.py, "-m", "tools.eval.evaluate", "score", "--truth", str(truth), "--results",
+                      str(ctx.results / "compare.json"), "--out", str(ctx.results / f"eval_{tag}")], f"07_eval_{tag}.log")
+        if rc != 0:
+            raise RuntimeError(f"eval({tag}) 실패(코드 {rc}): {tail(ctx, f'07_eval_{tag}.log')}")
+        done.append(f"{tag} {n}장")
+    if not done:
+        raise Skip("정답 CSV 에 맞는 사진이 없음")
+    return f"eval_*.md/csv ({', '.join(done)}), 정답 {labels}"
 
 
 # --- 서버 도우미 ---

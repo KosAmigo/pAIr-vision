@@ -76,6 +76,7 @@ def build_zip(out: Path, models: Path, photos: Path | None, labels: Path | None)
                 if info.is_dir():
                     continue
                 z.writestr(f"{PREFIX}/{info.filename}", code.read(info), compress_type=zipfile.ZIP_DEFLATED)
+            z.writestr(f"{PREFIX}/COMMIT", git("rev-parse", "HEAD").decode().strip())  # 결과 요약에 커밋 해시를 적으려고
             n_models = add_tree(z, models, "models", stored=True)  # 가중치는 압축이 안 되므로 그대로 담는다
             n_photos = add_tree(z, photos, "photos", IMAGE_SUFFIXES) if photos else 0
             if labels:
@@ -110,7 +111,7 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawTextHelpFormatter)
     ap.add_argument("--out", type=Path, default=ROOT / "dist")
     ap.add_argument("--models-dir", type=Path, default=ROOT / "models")
-    ap.add_argument("--photos", type=Path, default=None, help="사진 폴더(하위에 phone/ webcam/ scan/ 가능)")
+    ap.add_argument("--photos", type=Path, default=None, help="(선택) 사진 폴더(하위에 phone/ webcam/ scan/ extra/ 가능). 없으면 노트북이 RunPod 의 /workspace/photos 를 찾는다")
     ap.add_argument("--labels", type=Path, default=None, help="정답 CSV(tools/eval 형식)")
     ap.add_argument("--drive-url", default="", help="구글 드라이브 공유 링크(없으면 노트북이 실행할 때 물어본다)")
     ap.add_argument("--skip-model-download", action="store_true", help="모델이 이미 있으면 받기 단계를 건너뜀(검증은 함)")

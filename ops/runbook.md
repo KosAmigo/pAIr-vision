@@ -109,7 +109,7 @@ RunPod PyTorch 템플릿 Pod 의 JupyterLab 에 총괄 노트북을 복사해 �
 | ④ | pytest 전체 | `logs/04_pytest.log` |
 | ⑤ | 모델 속도 비교 | `compare.md/json` |
 | ⑥ | 용량 측정(QUICK 이면 1조합) | `capacity_<GPU>.md/csv` |
-| ⑦ | 정확도 평가(labels.csv 있을 때) | `eval.md/csv` |
+| ⑦ | 정확도 평가(labels.csv 있을 때, 내 사진·extra 따로) | `eval_mine.md/csv`, `eval_extra.md/csv` |
 | ⑧ | 실제 모델 서버를 띄워 `/v1/scan` 호출(+잘못된 요청 400 확인) | `scan.json` |
 | ⑨ | replay + sink 로 스트림·콜백 재생 | `replay.md`, `logs/sink.log` |
 | ⑩ | 요약과 결과 zip | `summary.md` |
