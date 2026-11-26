@@ -20,6 +20,8 @@ from pair_vision.models.base import PHONE, Box, Detection, Detector, Frame, Hand
 from pair_vision.models.lock import load_lock, verify_lock
 from pair_vision.models.postprocess import (
     COCO_LABELS,
+    RTMW_DET_FILE,
+    RTMW_POSE_FILE,
     OWL_PROMPTS,
     best_per_label,
     box_in_image,
@@ -60,14 +62,14 @@ class RealDetector(Detector):
 
     # --- 적재 ---
     def load(self) -> None:
-        for sub in (DFINE_DIR, OWL_DIR, HAND_FILE, FACE_FILE, POSE_FILE):
+        rtmw = self._rules.vision_backend == "rtmw"
+        needed = (DFINE_DIR, OWL_DIR) + ((RTMW_DET_FILE, RTMW_POSE_FILE) if rtmw else (HAND_FILE, FACE_FILE, POSE_FILE))
+        for sub in needed:
             if not (self._dir / sub).exists():
                 raise FileNotFoundError(f"모델 파일 없음: {self._dir / sub} (VISION_MODELS_DIR 확인)")
         if self._verify and self._lock_path:
             verify_lock(self._dir, load_lock(self._lock_path))
-        import mediapipe as mp
         import torch
-        from mediapipe.tasks.python import BaseOptions, vision
         from transformers import (
             AutoImageProcessor,
             AutoModelForObjectDetection,
@@ -75,7 +77,7 @@ class RealDetector(Detector):
             AutoProcessor,
         )
 
-        self._torch, self._mp = torch, mp
+        self._torch = torch
         self._device = "cuda" if torch.cuda.is_available() else "cpu"
         self.gpu = self._device == "cuda"
         self._dfine_proc = AutoImageProcessor.from_pretrained(self._dir / DFINE_DIR)
@@ -84,6 +86,28 @@ class RealDetector(Detector):
         self._owl = (
             AutoModelForZeroShotObjectDetection.from_pretrained(self._dir / OWL_DIR).to(self._device).eval()
         )
+        r = self._rules
+        self._rtmw = None
+        if rtmw:  # 손·얼굴·몸을 GPU 한 모델(RTMW)로
+            from pair_vision.models.rtmw import RtmwBackend  # onnxruntime·rtmlib 는 이 백엔드를 쓸 때만 필요
+
+            self._rtmw = RtmwBackend(self._dir, r)
+            self._rtmw.load()
+            self.gpu = self.gpu and self._rtmw.gpu  # 하나라도 CPU 로 돌면 gpu=False 로 알린다
+        else:
+            self._load_mediapipe()
+        self._owl_texts = [list(OWL_PROMPTS)]
+        self._thresholds = {
+            "keyboard": r.keyboard_threshold, "mouse": r.mouse_threshold, "note": r.note_threshold,
+            "tablet": r.tablet_threshold, "smartwatch": r.smartwatch_threshold, "phone": r.phone_threshold,
+        }
+        log.info("모델 적재 완료 (device=%s, 비전 백엔드=%s, gpu=%s)", self._device, r.vision_backend, self.gpu)
+
+    def _load_mediapipe(self) -> None:
+        import mediapipe as mp
+        from mediapipe.tasks.python import BaseOptions, vision
+
+        self._mp = mp
         r = self._rules
         self._hands = vision.HandLandmarker.create_from_options(
             vision.HandLandmarkerOptions(
@@ -107,12 +131,6 @@ class RealDetector(Detector):
                 base_options=BaseOptions(model_asset_path=str(self._dir / POSE_FILE)), num_poses=1
             )
         )
-        self._owl_texts = [list(OWL_PROMPTS)]
-        self._thresholds = {
-            "keyboard": r.keyboard_threshold, "mouse": r.mouse_threshold, "note": r.note_threshold,
-            "tablet": r.tablet_threshold, "smartwatch": r.smartwatch_threshold, "phone": r.phone_threshold,
-        }
-        log.info("모델 적재 완료 (device=%s)", self._device)
 
     def forget(self, key: str) -> None:
         self._last_owl_ms.pop(key, None)
@@ -138,11 +156,12 @@ class RealDetector(Detector):
         return last is None or frame.recv_ms - last >= self._rules.owl_interval_ms
 
     def _run_phone(self, frame: Frame) -> Detection:
+        import numpy as np
         from PIL import Image
 
         image = Image.open(io.BytesIO(frame.jpeg)).convert("RGB")
         coco = self._detect_coco(image)
-        hands = self._detect_hands(image)
+        hands = self._rtmw.hands(np.asarray(image)) if self._rtmw is not None else self._detect_hands(image)
         owl: list[ObjectDet] = []
         if self._owl_due(frame):
             owl = self._detect_owl(image)
@@ -163,6 +182,11 @@ class RealDetector(Detector):
         from PIL import Image
 
         image = Image.open(io.BytesIO(frame.jpeg)).convert("RGB")
+        if self._rtmw is not None:
+            return Detection(
+                key=frame.key, channel=frame.channel, seq=frame.seq, recv_ms=frame.recv_ms,
+                webcam=self._rtmw.webcam(np.asarray(image)),
+            )
         mp_image = self._mp.Image(self._mp.ImageFormat.SRGB, np.asarray(image))
         face = self._face.detect(mp_image)
         count_before = self._webcam_frames.get(frame.key, 0)

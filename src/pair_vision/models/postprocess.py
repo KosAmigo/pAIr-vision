@@ -7,6 +7,10 @@ from collections.abc import Iterable, Sequence
 
 from pair_vision.models.base import Box, HandDet, ObjectDet
 
+# RTMW 모델 파일(모델 폴더 아래). 사람 검출기(YOLOX-tiny)와 손·얼굴·몸 한 모델(RTMW)
+RTMW_DET_FILE = "rtmw/yolox_tiny.onnx"
+RTMW_POSE_FILE = "rtmw/rtmw-dw-l-m_256x192.onnx"
+
 # D-FINE(COCO) 라벨 -> 서버 라벨. 노트는 COCO book.
 COCO_LABELS = {"keyboard": "keyboard", "mouse": "mouse", "book": "note"}
 # OWLv2 문장 -> 서버 라벨

@@ -144,3 +144,12 @@ $env:VISION_RULES_PATH = "configs/rules.local-cpu.yaml"    # CPU 전용(아래 �
 - 병목 실측: 한 프로세스가 프레임을 한 장씩 처리 -> 초당 약 5장(응시자 2명분), GPU 는 놀고 CPU(손·얼굴·포즈, 스레드 경쟁)만 바쁨.
 - 대응: `VISION_WORKERS`(프로세스 풀, `models/pool.py`): 응시자 단위 고정 배정·균등 분배, 워커마다 코어 고정(리눅스)과 스레드 수 제한, 죽은 워커만 재기동. 웹캠 포즈는 3프레임마다만 돌리고 사이에는 직전 값을 재사용(`models.pose_every`, CPU 절약).
 - **이 PC(CPU 만 있음)에서는 효과를 볼 수 없다**(모델 전체가 CPU 라 워커 1개로도 코어가 다 찬다). 가짜 모델 시험과 진짜 모델 동작(오류 없음)만 확인했다. GPU Pod 에서 노트북의 용량 측정으로 효과를 재야 한다.
+
+### 손·얼굴·몸 모델: RTMW (2026-11-26, MediaPipe 대체)
+- **이유:** MediaPipe 는 파이썬에서 CPU 로만 돌아(손 77ms/장 등) 서버 처리량의 병목이었다. RTMW(OpenMMLab, `rtmlib` + ONNX Runtime)는 손·얼굴 랜드마크·몸(어깨) 133점을 **GPU 한 모델**로 낸다. 기본 백엔드(`models.vision_backend: rtmw`), MediaPipe 는 `mediapipe` 로 바꾸면 그대로 쓸 수 있다(`pip install .[mediapipe]` + `.task` 모델 필요).
+- **모델 파일**(`models/rtmw/`, lock 에 sha256): `yolox_tiny.onnx`(사람 검출, 18.9MB zip 에서 추출), `rtmw-dw-l-m_256x192.onnx`(133점, 120MB zip 에서 추출). 출처 download.openmmlab.com, Apache-2.0(코드·가중치 표기). **학습 데이터(COCO-WholeBody 등)의 이용 조건은 확인하지 못했다 - 법무 확인 대상.**
+- **휴대폰:** 프레임 전체를 사람 한 명의 상자로 넣어 손 두 개를 얻는다(사람 검출기를 거치면 팔이 사람 여러 명으로 잡혀 중복됐다). 책상 사진 8장 손 개수 `2,2,2,2,2,2,1,1` 이 눈으로 센 값(5번만 3개)과 맞는다. **한 상자에서는 손이 둘까지라 "손 3개 이상"은 감지하지 못한다**(이벤트 유형을 만들지 않기로 해서 영향은 작다).
+- **웹캠:** 사람 검출 -> RTMW. 얼굴 수는 얼굴 점수가 `face_threshold` 이상인 사람 수. 머리 각도는 얼굴 6점 PnP 로 새로 계산(yaw 는 응시자 오른쪽이 +, pitch 는 숙임이 +). **본인 웹캠 사진 10장에서 RTMW 는 고개를 숙이거나 많이 돌린 사진에서도 얼굴을 잡았다**(MediaPipe 는 놓쳐 `NO_FACE`). 숙인 사진에서 `HEAD_DOWN`(6초 지속) 이 발생하는 것을 확인했다.
+- **임시 보정값:** RTMW 6점 모델의 yaw 는 실제보다 2배쯤 크게·흔들려 `yaw_scale: 0.55`(MediaPipe 값과의 비교, **한 사람 10장 기준**). 다른 사람·자세로 재확인이 필요하다. 시선(`GAZE_AWAY`)은 계속 끈다.
+- **GPU:** ONNX Runtime GPU(CUDA) 로 돌려야 효과가 난다. bootstrap.sh 가 GPU 가 있으면 `onnxruntime-gpu` 로 교체한다. **GPU Pod 에서는 아직 실행해 보지 못했다**(이 PC 는 CPU). CUDA 를 못 잡으면 CPU 로 돌고 `/readyz` 의 `gpu` 가 `false` 로 나온다.
+- 속도는 이 PC(CPU)에서 프레임당 약 0.15~0.35초(YOLOX+RTMW)였다. GPU 수치는 Pod 에서 용량 측정으로 확인한다.

@@ -22,6 +22,8 @@ class LockedModel:
     license: str
     directory: str  # 모델 폴더 아래 위치(파일이면 파일 이름)
     files: Mapping[str, str] = field(default_factory=dict)  # 디렉터리 기준 상대 경로 -> sha256
+    zip_url: str = ""  # 단일 파일 모델을 zip 으로 배포하는 곳(없으면 repo 주소가 곧 파일 주소)
+    zip_member: str = ""  # zip 안의 파일 경로
 
 
 def sha256_of(path: Path) -> str:
@@ -41,6 +43,7 @@ def load_lock(path: str | Path) -> list[LockedModel]:
             LockedModel(
                 name=raw["name"], role=raw.get("role", ""), repo=raw["repo"],
                 license=raw["license"], directory=raw["directory"], files=dict(raw.get("files") or {}),
+                zip_url=raw.get("zip_url", ""), zip_member=raw.get("zip_member", ""),
             )
         )
     return models

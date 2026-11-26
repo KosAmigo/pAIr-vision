@@ -37,7 +37,14 @@ def main() -> int:
                 continue
             target.parent.mkdir(parents=True, exist_ok=True)
             print(f"받는 중: {m.name} {rel if rel != '.' else m.directory}", flush=True)
-            if m.directory.endswith(".task"):
+            if m.zip_url:  # zip 으로 배포되는 단일 파일(RTMW)
+                import io
+                import zipfile
+
+                data = urllib.request.urlopen(m.zip_url, timeout=120).read()  # noqa: S310 - lock 에 적힌 고정 주소
+                with zipfile.ZipFile(io.BytesIO(data)) as archive:
+                    target.write_bytes(archive.read(m.zip_member))
+            elif m.directory.endswith(".task"):
                 urllib.request.urlretrieve(m.repo, target)  # noqa: S310 - lock 에 적힌 고정 주소
             else:
                 from huggingface_hub import hf_hub_download

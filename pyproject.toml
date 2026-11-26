@@ -18,11 +18,15 @@ dependencies = [
 real = [
     "torch>=2.4",
     "transformers>=5.0",
-    "mediapipe>=0.10",
     "pillow>=10",
     "numpy>=1.26",
+    "rtmlib>=0.0.16",  # RTMW(손·얼굴·몸) 추론. GPU 에서는 onnxruntime 대신 onnxruntime-gpu 가 필요하다(bootstrap.sh 가 교체)
+    "onnxruntime>=1.20",
     "scipy>=1.11",  # transformers OWLv2 이미지 전처리가 요구한다(없으면 컨테이너에서 OWLv2 실패)
 ]
+
+# 예전 방식(CPU 전용) 백엔드: models.vision_backend: mediapipe 일 때만 필요
+mediapipe = ["mediapipe>=0.10"]
 
 [dependency-groups]
 dev = [

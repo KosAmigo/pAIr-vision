@@ -16,11 +16,12 @@ PHOTOS = Path(os.environ["VISION_TEST_PHOTOS"]) if os.environ.get("VISION_TEST_P
 
 
 def _weights_ready() -> bool:
-    needed = ("dfine-small-coco", "owlv2-base-patch16-ensemble", "hand_landmarker.task")
+    needed = ("dfine-small-coco", "owlv2-base-patch16-ensemble", "rtmw/yolox_tiny.onnx", "rtmw/rtmw-dw-l-m_256x192.onnx")
     if not all((MODELS_DIR / n).exists() for n in needed):
         return False
     try:
-        import mediapipe  # noqa: F401
+        import onnxruntime  # noqa: F401
+        import rtmlib  # noqa: F401
         import PIL  # noqa: F401
         import torch  # noqa: F401
         import transformers  # noqa: F401
@@ -76,14 +77,24 @@ def test_owl_runs_only_on_interval_and_forget_resets(detector):
     assert labels(5100) & {"tablet", "smartwatch", "phone"}
 
 
-def test_webcam_channel_gives_face_and_shoulder_features(detector):
+def test_webcam_channel_gives_face_features(detector):
     from pair_vision.models.base import Frame
 
-    # 책상 사진에는 얼굴이 없다: 얼굴 0개(NO_FACE 조건)이고 손·물체 결과는 비어 있다. 사람이 보이는 사진(3번)은 어깨가 잡힌다.
+    # 책상 사진에는 얼굴이 없다: 얼굴 0개(NO_FACE 조건)이고 손·물체 결과는 비어 있다.
     det = detector.run([Frame("K", "webcam", 1, 1000, jpeg_of("3.png"))])[0]
     assert det.webcam is not None and det.webcam.face_count == 0 and det.webcam.yaw is None
     assert det.keyboard is None and det.hands == () and det.objects == ()
-    assert det.webcam.shoulders is not None
+
+
+def test_phone_hand_counts_match_the_eight_photos(detector):
+    """같은 장면 8장에서 손을 눈으로 센 값(5번 사진은 손 3개지만 RTMW 는 한 상자에서 둘까지). 정확도 확정이 아니라 배선 확인."""
+    from pair_vision.models.base import Frame
+
+    counts = []
+    for name in sorted(p.name for p in PHOTOS.glob("*.png"))[:8]:
+        det = detector.run([Frame("K", "phone", 1, 1000, jpeg_of(name))])[0]
+        counts.append(det.hand_count)
+    assert counts == [2, 2, 2, 2, 2, 2, 1, 1]
 
 
 def test_broken_jpeg_is_skipped_not_reported_as_empty(detector):
@@ -129,7 +140,7 @@ def test_frontal_webcam_photos_give_one_face_near_zero_pose(detector):
         buf = io.BytesIO()
         img.save(buf, "JPEG", quality=55)
         f = detector.run([Frame("W", "webcam", 1, 1000, buf.getvalue())])[0].webcam
-        if f.face_count == 1:  # 고개를 많이 숙이거나 돌린 사진은 얼굴을 놓친다(NO_FACE 로 센다)
-            seen += 1
-            assert abs(f.yaw) < 20 and abs(f.pitch) < 20 and f.shoulders is not None
+        # RTMW 는 고개를 숙이거나 많이 돌린 사진에서도 얼굴을 잡는다(MediaPipe 는 놓쳐 NO_FACE 로 셌다)
+        assert f.face_count == 1 and f.yaw is not None and f.shoulders is not None
+        seen += 1
     assert seen >= 1

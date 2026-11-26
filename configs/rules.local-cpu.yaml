@@ -2,7 +2,7 @@
 # rules.default.yaml 과 달리 OWLv2 주기를 30초로 늘렸다(CPU 에서 OWLv2 한 번 약 3초 -> 5초 주기면 손 규칙 끊김 허용 3초를 넘겨 손 이벤트가 안 난다).
 # 규칙 값 (계약 §9, 모두 임시값 — 실측 M1~M6 뒤 조정). 배포 없이 이 파일만 바꿔 쓴다.
 # 이벤트의 rulesVersion 에는 아래 version 이 그대로 기록된다. 값을 바꾸면 version 도 올린다.
-version: "2026-11-26.2-cpu-local"
+version: "2026-11-26.3-cpu-local"
 
 profiles:
   default:
@@ -62,4 +62,8 @@ models:
   hand_threshold: 0.5        # MediaPipe Hands 감지 기준값
   max_hands: 4
   hand_merge_distance: 0.06  # 이보다 가까운 손은 하나로 합침(프레임 비율, 임시값)
+  vision_backend: rtmw       # 얼굴·손·몸: rtmw(GPU) 또는 mediapipe(CPU, 예전 방식)
+  face_threshold: 0.5        # RTMW 얼굴 점 평균 점수 기준
+  yaw_scale: 0.55            # RTMW 머리 좌우 각도 보정(본인 사진 10장 기준 임시값)
+  pitch_scale: 1.0
   pose_every: 3             # 웹캠 포즈(어깨)는 3프레임마다(사이에는 직전 값 재사용, CPU 절약)

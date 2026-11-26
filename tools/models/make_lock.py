@@ -28,6 +28,22 @@ MODELS = [
         "directory": "owlv2-base-patch16-ensemble",
     },
     {
+        "name": "rtmw-yolox-tiny", "role": "웹캠 사람 검출(RTMW 앞단)",
+        "repo": "https://github.com/open-mmlab/mmpose/tree/main/projects/rtmpose",
+        "license": "Apache-2.0 (OpenMMLab 코드·가중치 기준; 학습 데이터 조건은 확인 필요)",
+        "directory": "rtmw/yolox_tiny.onnx",
+        "zip_url": "https://download.openmmlab.com/mmpose/v1/projects/rtmposev1/onnx_sdk/yolox_tiny_8xb8-300e_humanart-6f3252f9.zip",
+        "zip_member": "20230928/yolox_onnx/yolox_tiny_8xb8-300e_humanart-6f3252f9/end2end.onnx",
+    },
+    {
+        "name": "rtmw-dw-l-m", "role": "손·얼굴 랜드마크·몸(어깨) 133점, GPU(ONNX Runtime) - MediaPipe 대체",
+        "repo": "https://github.com/open-mmlab/mmpose/tree/main/projects/rtmpose",
+        "license": "Apache-2.0 (OpenMMLab 코드·가중치 기준; COCO-WholeBody 등 학습 데이터 조건은 확인 필요)",
+        "directory": "rtmw/rtmw-dw-l-m_256x192.onnx",
+        "zip_url": "https://download.openmmlab.com/mmpose/v1/projects/rtmw/onnx_sdk/rtmw-dw-l-m_simcc-cocktail14_270e-256x192_20231122.zip",
+        "zip_member": "end2end.onnx",
+    },
+    {
         "name": "mediapipe-hands", "role": "손 랜드마크",
         "repo": "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task",
         "license": "Apache-2.0 (MediaPipe 코드 기준; 모델 파일 자체 조건은 미확인)",

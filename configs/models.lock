@@ -25,6 +25,24 @@ models:
     special_tokens_map.json: d6e2b9cf664efbad2d22998b8d3da986abcbeed3e0825ad33605c9401f9cf73e
     tokenizer_config.json: b55cda6198e152ded427c8a9b3faf1cccf27a7fa080697a62f6ff143f511f44f
     vocab.json: e089ad92ba36837a0d31433e555c8f45fe601ab5c221d4f607ded32d9f7a4349
+- name: rtmw-yolox-tiny
+  role: 웹캠 사람 검출(RTMW 앞단)
+  repo: https://github.com/open-mmlab/mmpose/tree/main/projects/rtmpose
+  license: Apache-2.0 (OpenMMLab 코드·가중치 기준; 학습 데이터 조건은 확인 필요)
+  directory: rtmw/yolox_tiny.onnx
+  zip_url: https://download.openmmlab.com/mmpose/v1/projects/rtmposev1/onnx_sdk/yolox_tiny_8xb8-300e_humanart-6f3252f9.zip
+  zip_member: 20230928/yolox_onnx/yolox_tiny_8xb8-300e_humanart-6f3252f9/end2end.onnx
+  files:
+    .: ceb11c07298f95c50d7c5abeb906d03340c85f23aa79e3e66966e7fb6c307250
+- name: rtmw-dw-l-m
+  role: 손·얼굴 랜드마크·몸(어깨) 133점, GPU(ONNX Runtime) - MediaPipe 대체
+  repo: https://github.com/open-mmlab/mmpose/tree/main/projects/rtmpose
+  license: Apache-2.0 (OpenMMLab 코드·가중치 기준; COCO-WholeBody 등 학습 데이터 조건은 확인 필요)
+  directory: rtmw/rtmw-dw-l-m_256x192.onnx
+  zip_url: https://download.openmmlab.com/mmpose/v1/projects/rtmw/onnx_sdk/rtmw-dw-l-m_simcc-cocktail14_270e-256x192_20231122.zip
+  zip_member: end2end.onnx
+  files:
+    .: 68db326c5c6f3273456f803eae0faf5440478369f2c3ee67258d2f36512e8d76
 - name: mediapipe-hands
   role: 손 랜드마크
   repo: https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task

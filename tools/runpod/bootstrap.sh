@@ -32,7 +32,7 @@ if command -v apt-get >/dev/null 2>&1 && [ "$(id -u)" = "0" ]; then
   if [ "${#missing[@]}" -gt 0 ]; then
     echo "  설치: ${missing[*]}"
     apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends "${missing[@]}" \
-      || echo "  경고: apt 설치 실패 - mediapipe 가 libEGL/libxcb 오류를 내면 직접 설치해야 한다"
+      || echo "  경고: apt 설치 실패 - opencv·onnxruntime 이 libGL/libxcb 오류를 내면 직접 설치해야 한다"
   else
     echo "  모두 있음"
   fi
@@ -62,12 +62,22 @@ if ! torch_ok; then
   echo "  torch 가 2.6 미만 -> 가상환경에 torch 2.6 (cu$CU) 설치 (수 분)"
   "$VENV/bin/python" -m pip install -q "torch>=2.6,<2.7" --index-url "https://download.pytorch.org/whl/cu$CU"     || { echo "  torch 2.6 설치 실패 - 위 오류를 확인하세요" >&2; exit 1; }
 fi
+# RTMW(손·얼굴·몸)는 ONNX Runtime 으로 GPU 에서 돈다: GPU 가 있으면 onnxruntime(CPU) 을 onnxruntime-gpu 로 바꾼다.
+if command -v nvidia-smi >/dev/null 2>&1; then
+  if ! "$VENV/bin/python" -c "import sys, onnxruntime as o; sys.exit(0 if 'CUDAExecutionProvider' in o.get_available_providers() else 1)" 2>/dev/null; then
+    echo "  onnxruntime -> onnxruntime-gpu 교체"
+    "$VENV/bin/python" -m pip uninstall -y -q onnxruntime >/dev/null 2>&1 || true
+    "$VENV/bin/python" -m pip install -q onnxruntime-gpu || echo "  경고: onnxruntime-gpu 설치 실패 - RTMW 가 CPU 로 돌아 느립니다" >&2
+  fi
+fi
+
 "$VENV/bin/python" - <<'PYEOF'
-import torch, transformers, mediapipe, fastapi
+import torch, transformers, fastapi, onnxruntime
+from rtmlib import YOLOX, RTMPose  # noqa: F401  RTMW 추론 라이브러리
 from transformers import AutoModelForObjectDetection, AutoModelForZeroShotObjectDetection  # torch 가 낮으면 여기서 실패한다
 print(f"  torch {torch.__version__} | CUDA 사용 가능: {torch.cuda.is_available()}"
       + (f" | {torch.cuda.get_device_name(0)}" if torch.cuda.is_available() else " (GPU 없음)"))
-print(f"  transformers {transformers.__version__} | mediapipe {mediapipe.__version__} | fastapi {fastapi.__version__}")
+print(f"  transformers {transformers.__version__} | onnxruntime {onnxruntime.__version__} {onnxruntime.get_available_providers()} | fastapi {fastapi.__version__}")
 PYEOF
 
 echo "[3/3] 모델"

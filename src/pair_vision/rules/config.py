@@ -97,6 +97,11 @@ class ModelRules:
     hand_threshold: float = 0.5
     max_hands: int = 4
     hand_merge_distance: float = 0.06  # 이보다 가까운 두 손은 하나로(프레임 비율, 점수 높은 쪽 유지)
+    # 얼굴·손·몸 모델: "rtmw"(GPU, 기본) 또는 "mediapipe"(CPU 전용, 예전 방식)
+    vision_backend: str = "rtmw"
+    face_threshold: float = 0.5  # RTMW: 얼굴 점 68개의 평균 점수가 이 값 이상이면 얼굴로 센다
+    yaw_scale: float = 0.55  # RTMW 6점 모델의 yaw 는 실제보다 2배쯤 크게 나오고 흔들려 줄인다(본인 사진 10장 기준, 다른 사람으로 재확인 필요)
+    pitch_scale: float = 1.0
     pose_every: int = 3  # 웹캠: 얼굴은 매 프레임, 포즈(어깨)는 N 프레임마다(사이에는 직전 값 재사용, CPU 절약. 프론트는 4)
 
 
@@ -219,8 +224,14 @@ def _parse_models(raw: Mapping) -> ModelRules:
     pose_every = raw.get("pose_every", d.pose_every)
     if not isinstance(pose_every, int) or isinstance(pose_every, bool) or pose_every < 1:
         raise ValueError(f"규칙 설정 models.pose_every 는 1 이상의 정수여야 합니다: {pose_every!r}")
+    backend = raw.get("vision_backend", d.vision_backend)
+    if backend not in ("rtmw", "mediapipe"):
+        raise ValueError(f"규칙 설정 models.vision_backend 는 rtmw 또는 mediapipe 여야 합니다: {backend!r}")
+    extra = {key: _score("models", key, raw.get(key, getattr(d, key))) for key in ("face_threshold", "yaw_scale", "pitch_scale")}
     return ModelRules(
         **scores,
+        vision_backend=backend,
+        **extra,
         pose_every=pose_every,
         owl_interval_ms=_positive("models", "owl_interval_ms", raw.get("owl_interval_ms", d.owl_interval_ms)),
         max_hands=max_hands,

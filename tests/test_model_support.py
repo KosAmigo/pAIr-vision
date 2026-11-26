@@ -65,7 +65,7 @@ def test_lock_roundtrip_and_tamper_detection(tmp_path):
 
 def test_committed_lock_lists_the_confirmed_models():
     locked = load_lock(Path(__file__).resolve().parents[1] / "configs" / "models.lock")
-    assert {m.name for m in locked} == {"dfine-s", "owlv2", "mediapipe-hands", "mediapipe-face", "mediapipe-pose-lite"}
+    assert {m.name for m in locked} == {"dfine-s", "owlv2", "rtmw-yolox-tiny", "rtmw-dw-l-m", "mediapipe-hands", "mediapipe-face", "mediapipe-pose-lite"}
     for m in locked:
         assert m.license and m.repo and all(len(h) == 64 for h in m.files.values())
 
