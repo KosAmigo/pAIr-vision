@@ -71,3 +71,9 @@ RunPod PyTorch 템플릿 Pod 의 JupyterLab 에 총괄 노트북을 복사해 �
   2. 노트북 없이: Pod 터미널에서 `git clone` 후 `VISION_API_KEY=<키> bash tools/runpod/start.sh` (RunPod 템플릿의 Container Start Command 로 `bash /workspace/pAIr-vision/tools/runpod/start.sh` 를 줘도 된다. 콜백을 쓰면 `VISION_CALLBACK_URL`·`VISION_CALLBACK_SECRET` 도 환경 변수로).
 - 코드를 갱신하려면 `git -C /workspace/pAIr-vision pull` 후 다시 실행. 새 모델이나 패키지 변경은 위 스크립트가 알아서 반영한다.
 - 이 방식도 첫 기동은 느리다(패키지 수 GB + 모델 약 700MB). 첫 기동을 없애려면 도커 이미지에 다 넣어 레지스트리에 올리는 방식(§1·§6)이 더 낫다.
+
+### 6-4. 압축 파일(구글 드라이브) 방식 - 권장 (저장소·토큰 불필요)
+- 서버 코드 + 모델 5개를 `pair-vision-bundle.zip`(약 716MB)으로 묶어 구글 드라이브('링크가 있는 모든 사용자')에 올리고, 총괄 노트북(저장소 밖 파일)과 함께 전달한다. 노트북이 링크로 받아 **크기·sha256 을 검증**하고 풀어서 쓴다(모델은 zip 안에 있어 따로 내려받지 않는다). zip 을 JupyterLab 에 직접 올려도 된다(파일 이름 `pair-vision-bundle.zip`).
+- 코드·가상환경·모델은 `/workspace` 가 아니라 홈 아래 `~/pair-vision-work` 에 둔다(`/workspace` 권한 문제 회피). 서버 키 같은 작은 설정 파일만 `/workspace/.pair-vision/env.json` 에 저장한다. Pod 를 새로 만들면 압축 해제와 파이썬 패키지 설치를 다시 한다.
+- 새 버전을 배포하려면 zip 과 노트북을 다시 만들어 교체한다(zip 의 크기·sha256 이 노트북에 박혀 있어 둘은 짝이다).
+- RunPod PyTorch 템플릿의 torch 가 2.6 미만이면 `bootstrap.sh` 가 가상환경에 torch 2.6(CUDA 맞춤)을 추가로 설치한다.
