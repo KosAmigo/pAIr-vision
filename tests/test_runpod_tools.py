@@ -98,3 +98,14 @@ def test_step_extra_downloads_into_persistent_folder(tmp_path, monkeypatch):
     msg = T.step_extra(ctx, "https://drive.google.com/file/d/x/view?usp=drive_link", src.stat().st_size, T._sha256(src))
     assert (ws / "extra" / "labels.csv").is_file() and "1장" in msg
     assert "이미 있음" in T.step_extra(ctx, "https://drive.google.com/x")  # 두 번째는 받지 않는다
+
+
+def test_find_labels_merges_without_duplicates(tmp_path, monkeypatch):
+    ws = tmp_path / "ws" / "photos"
+    monkeypatch.setattr(T, "PHOTO_ROOTS", ("photos", str(ws)))
+    (ws / "extra").mkdir(parents=True)
+    (ws / "labels.csv").write_text("file,channel,phone\nmine.jpg,phone,1\noi_1.jpg,phone,0\n", encoding="utf-8")
+    (ws / "extra" / "labels.csv").write_text("file,channel,phone\noi_1.jpg,phone,1\n", encoding="utf-8")
+    ctx = T.Ctx(tmp_path / "pair-all-tests")
+    text = T.find_labels(ctx).read_text(encoding="utf-8-sig").splitlines()
+    assert text[1:] == ["mine.jpg,phone,1", "oi_1.jpg,phone,1"]  # 겹친 사진은 한 번, extra 쪽 값

@@ -249,17 +249,18 @@ def find_labels(ctx: Ctx) -> Path | None:
     if len(files) == 1:
         return files[0]
     fields: list[str] = []
-    rows: list[dict] = []
+    rows: dict[str, dict] = {}  # 사진 이름 -> 줄. 두 파일에 같은 사진이 있으면 extra/labels.csv(뒤) 것을 쓴다
     for path in files:
         with path.open(newline="", encoding="utf-8-sig") as f:
             reader = csv.DictReader(f)
             fields += [n for n in (reader.fieldnames or []) if n not in fields]
-            rows += list(reader)
+            for row in reader:
+                rows[Path(row["file"].strip()).name] = row
     merged = ctx.results / "labels_all.csv"
     with merged.open("w", newline="", encoding="utf-8-sig") as f:
         writer = csv.DictWriter(f, fieldnames=fields, restval="")
         writer.writeheader()
-        writer.writerows(rows)
+        writer.writerows(rows.values())
     return merged
 
 
