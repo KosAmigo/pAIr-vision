@@ -4,8 +4,14 @@
 #   Docker 이미지인 경우: bash /opt/pair-bench/tools/bench/runpod_bench.sh   (패키지·모델이 이미 들어 있어 설치를 건너뛴다)
 # 필요한 것: CUDA 가 켜진 PyTorch Pod. 사진은 PHOTOS(기본 photos/ 또는 /workspace/photos)에 있으면 쓰고,
 #            없으면 속도 측정용 합성 사진을 만든다(속도는 사진 내용과 거의 무관하다).
+# 하위 명령(첫 인자):
+#   (없음)            모델 비교 측정(속도 ms/장)  -> result_<GPU>.md/.json
+#   capacity          용량 측정(가상 응시자 N명, 조합 workers x 배치 x fp16 x 웹캠 x 인원) -> capacity_<GPU>.md/.csv
+#                     환경 변수로 일부만 고른다: WORKERS=1,2,4 BATCH=off,on FP16=off,on WEBCAM=server,off EXAMINEES=10,20,30 DURATION=20 WARMUP=5
+#                     (모델 파일 전부 필요: dfine-small-coco owlv2-base-patch16-ensemble hand_landmarker.task face_landmarker.task pose_landmarker_lite.task)
 # 결과: result_<GPU이름>.md(표) 와 result_<GPU이름>.json — /workspace 가 있으면 거기에(Jupyter 에서 바로 내려받기), 없으면 현재 폴더
 set -euo pipefail
+MODE="${1:-compare}"
 cd "$(dirname "$0")/../.."
 
 MODELS="${MODELS:-mediapipe-hands,dfine-s,rtdetr-r18,owlv2}"
@@ -88,6 +94,17 @@ for i in range(8):
 PY
 fi
 echo "사진 폴더: $PHOTOS"
+
+if [ "$MODE" = "capacity" ]; then
+  echo "== 5. 용량 측정 (조합이 많으면 1~2시간. WORKERS= EXAMINEES= 등으로 줄이세요)"
+  GPU_NAME="$(nvidia-smi --query-gpu=name --format=csv,noheader | head -1 | tr ' /' '__')"
+  python -c "import pynvml" 2>/dev/null || pip install -q nvidia-ml-py psutil || true
+  python -c "import psutil" 2>/dev/null || pip install -q psutil || true
+  PYTHONPATH="src:." python -m tools.bench.capacity --detector real --no-verify     --photos "$PHOTOS" --models-dir models     --workers "${WORKERS:-1,2,4,8}" --batch "${BATCH:-off,on}" --fp16 "${FP16:-off,on}"     --webcam "${WEBCAM:-server,off}" --examinees "${EXAMINEES:-10,20,30,40}"     --duration "${DURATION:-20}" --warmup "${WARMUP:-5}"     --out "$OUT_DIR/capacity_${GPU_NAME}"
+  echo
+  echo "끝. 내려받을 파일: $OUT_DIR/capacity_${GPU_NAME}.md, $OUT_DIR/capacity_${GPU_NAME}.csv"
+  exit 0
+fi
 
 echo "== 5. 측정"
 GPU_NAME="$(nvidia-smi --query-gpu=name --format=csv,noheader | head -1 | tr ' /' '__')"

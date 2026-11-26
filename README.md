@@ -144,3 +144,48 @@ $env:VISION_RULES_PATH = "configs/rules.local-cpu.yaml"    # CPU 전용(아래 �
 - 병목 실측: 한 프로세스가 프레임을 한 장씩 처리 -> 초당 약 5장(응시자 2명분), GPU 는 놀고 CPU(손·얼굴·포즈, 스레드 경쟁)만 바쁨.
 - 대응: `VISION_WORKERS`(프로세스 풀, `models/pool.py`): 응시자 단위 고정 배정·균등 분배, 워커마다 코어 고정(리눅스)과 스레드 수 제한, 죽은 워커만 재기동. 웹캠 포즈는 3프레임마다만 돌리고 사이에는 직전 값을 재사용(`models.pose_every`, CPU 절약).
 - **이 PC(CPU 만 있음)에서는 효과를 볼 수 없다**(모델 전체가 CPU 라 워커 1개로도 코어가 다 찬다). 가짜 모델 시험과 진짜 모델 동작(오류 없음)만 확인했다. GPU Pod 에서 노트북의 용량 측정으로 효과를 재야 한다.
+
+## 선택을 위한 측정
+
+모델·구조를 고르기 위한 도구다. 기존 동작은 안 바뀌고, 새 동작은 전부 환경 변수로 켠다.
+
+| 환경 변수 | 기본 | 뜻 |
+|---|---|---|
+| `VISION_BATCH_GPU` | 0 | 1: 프레임을 묶어 D-FINE 한 번에(주기가 된 프레임만 OWLv2 한 번에). 손·웹캠은 프레임별 CPU |
+| `VISION_FP16` | 0 | 1: cuda 에서 half 로 실행(CPU 는 무시) |
+| `VISION_FAST_DECODE` | 0 | 1: JPEG 를 PIL `draft`(큰 사진만 줄여 디코드)·turbojpeg(설치돼 있으면)로 빠르게 풂 |
+| `VISION_WEBCAM` | server | `off`: 웹캠 프레임을 서버에서 분석하지 않음(얼굴·포즈 생략, 용량 비교용) |
+
+| 하는 일 | 명령 |
+|---|---|
+| 용량(가상 응시자 N명) | `python -m tools.bench.capacity --detector real --photos <폴더> --out capacity` |
+| 용량, 일부 조합만 | `... --workers 2,4 --batch on --fp16 on --webcam server,off --examinees 20,30,40` |
+| 용량 동작 확인(가짜 모델) | `python -m tools.bench.capacity --detector fake --workers 1 --batch off --fp16 off --webcam server --examinees 5 --duration 5` |
+| 모델 속도 비교 | `python -m tools.bench.compare --images <폴더> --models dfine-s,owlv2 --json out.json` |
+| 정답 템플릿 / 정확도 | `python -m tools.eval.evaluate template ...` / `score ...` (`docs/photo-collection-guide.md`) |
+
+실행은 저장소 루트에서 `PYTHONPATH=src;.`(PowerShell: `$env:PYTHONPATH="src;."`)를 두고 한다.
+
+### 결과 읽는 법 (`capacity.md` / `capacity.csv`)
+
+| 항목 | 뜻 |
+|---|---|
+| 맨 위 요약 | 조합별로 응시자당 0.9fps 이상을 유지한 최대 인원. 이 숫자로 워커 수·배치·fp16·웹캠 서버 분석 여부를 고른다 |
+| fps 휴대폰·웹캠 | 분석이 끝난 프레임 수 / 응시자 수 / 초. 1.0 이 최대. 통과 = 둘 다 0.9 이상(웹캠 off 면 휴대폰만) |
+| 지연 p50·p95 | 프레임이 도착해서 분석이 끝날 때까지(ms). 손 규칙의 끊김 허용(3초)보다 p95 가 크면 위험 |
+| 버림 % | 큐 길이 1 에서 밀려 버려진 프레임 비율 |
+| GPU %·MB, CPU %·코어 | 측정 중 평균 사용률과 GPU 메모리 최댓값. GPU 가 낮은데 fps 가 모자라면 CPU(손·얼굴·포즈, 디코드)가 병목 |
+| 단계 ms | 프레임 한 장당 평균: decode · dfine · owl · hands · face · pose. 어느 단계가 먼저 줄어야 하는지 본다 |
+
+인원을 올리다 처음 미달하면 더 큰 인원은 건너뛴다(`--full` 이면 계속 잰다). 사진 폴더가 없으면 합성 사진으로 속도만 잰다(검출 결과는 의미 없음).
+
+### RunPod 에서 돌리는 순서
+
+1. 노트북(`tools/bench/runpod_bench.ipynb`)을 첫 칸부터 실행해 모델·사진을 받는다(또는 `bash tools/bench/runpod_bench.sh`).
+2. 용량 칸에서 `QUICK = True` 로 한 조합이 끝까지 도는지 확인한다.
+3. `QUICK = False` 로 전체를 돌린다(1~2시간). 스크립트로는 `bash tools/bench/runpod_bench.sh capacity` (`WORKERS=1,2,4 EXAMINEES=20,30,40` 처럼 환경 변수로 줄임).
+4. `results/capacity_<GPU>.md`·`.csv` 를 내려받는다. 끝나면 Pod 를 반드시 정지한다.
+
+### 방 스캔 `POST /v1/scan`
+
+`Authorization: Bearer`, multipart 필드 `images`(파일 이름이 사진 이름: `h00`~`h11` `v0`~`v4` `m_front` `m_left` `m_back` `m_right` `m_floor` `m_ceiling`), 최대 24장·장당 400KB·JPEG. 응답은 `items`(사진별 `persons` `phones` `monitors` `laptops` `books` `tablets`, `objects` 의 `box` 는 0~1), `summary`(사진 한 장 기준 최댓값), `verdict`(`PASS`/`WARN`, 사유 `MULTI_PERSON` `PHONE` `MULTI_MONITOR` `BOOK` `TABLET` 과 해당 사진 이름), `ms`. `MULTI_MONITOR` 는 한 장 안에서 tv+laptop 이 2개 이상일 때만. 오류는 400 `BAD_SCAN`. D-FINE(person·cell phone·tv·laptop·book)와 OWLv2(`a tablet`)를 묶음으로 쓰고, 가짜 모델은 JPEG 안 `SCAN:person,tv` 표식으로 시험한다.
