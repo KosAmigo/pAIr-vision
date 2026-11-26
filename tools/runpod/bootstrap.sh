@@ -52,8 +52,20 @@ else
   "$VENV/bin/python" -m pip install -q "$ROOT[real]" huggingface_hub
   echo "$WANT" > "$VENV/.stamp"
 fi
+# transformers 5 는 torch>=2.6 이 필요하다. RunPod PyTorch 템플릿(예: torch 2.4)이 더 낮으면 가상환경에만 torch 2.6 을 설치한다.
+# 시스템 torch 의 CUDA 버전에 맞는 휠(cu124/cu126/cu128)을 쓴다 - 최신 CUDA 휠은 Pod 의 드라이버보다 높아 GPU 를 못 잡을 수 있다.
+torch_ok() {
+  "$VENV/bin/python" -c "import sys, torch; v = tuple(int(x) for x in torch.__version__.split('+')[0].split('.')[:2]); sys.exit(0 if v >= (2, 6) else 1)" 2>/dev/null
+}
+if ! torch_ok; then
+  CU="$("$VENV/bin/python" -c "import torch; print((torch.version.cuda or '').replace('.', '')[:3])" 2>/dev/null || true)"
+  case "$CU" in 124|126|128) ;; *) CU=124 ;; esac
+  echo "  torch 가 2.6 미만 -> 가상환경에 torch 2.6 (cu$CU) 설치 (수 분)"
+  "$VENV/bin/python" -m pip install -q "torch>=2.6,<2.7" --index-url "https://download.pytorch.org/whl/cu$CU"     || { echo "  torch 2.6 설치 실패 - 위 오류를 확인하세요" >&2; exit 1; }
+fi
 "$VENV/bin/python" - <<'PYEOF'
 import torch, transformers, mediapipe, fastapi
+from transformers import AutoModelForObjectDetection, AutoModelForZeroShotObjectDetection  # torch 가 낮으면 여기서 실패한다
 print(f"  torch {torch.__version__} | CUDA 사용 가능: {torch.cuda.is_available()}"
       + (f" | {torch.cuda.get_device_name(0)}" if torch.cuda.is_available() else " (GPU 없음)"))
 print(f"  transformers {transformers.__version__} | mediapipe {mediapipe.__version__} | fastapi {fastapi.__version__}")
