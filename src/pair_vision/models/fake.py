@@ -21,9 +21,11 @@ from pair_vision.models.base import (
     Frame,
     HandDet,
     ObjectDet,
+    ScanDecodeError,
     Shoulders,
     WebcamFeatures,
 )
+from pair_vision.models.options import RunOptions
 
 KEYBOARD = Box(0.20, 0.50, 0.60, 0.90)
 MOUSE = Box(0.65, 0.60, 0.80, 0.80)
@@ -64,6 +66,10 @@ WEBCAM_STATES: dict[str, WebcamFeatures] = {
 }
 
 _MARKER = re.compile(rb"FAKE:([A-Z_]+)")
+# 방 스캔 가짜 표식: JPEG 안에 `SCAN:person,person,tv` 처럼 쉼표로 물체를 적는다(표식이 없으면 빈 사진)
+_SCAN_MARKER = re.compile(rb"SCAN:([a-z_,]*)")
+_SCAN_LABELS = {"person", "phone", "tv", "laptop", "book", "tablet"}
+_JPEG_MAGIC = b"\xff\xd8\xff"
 
 NAMED_SCENARIOS: dict[str, list[tuple[str, float]]] = {
     "normal": [("NORMAL", 0)],
@@ -100,8 +106,9 @@ class FakeDetector(Detector):
     name = "fake"
     gpu = False
 
-    def __init__(self, scenario: str = "normal") -> None:
+    def __init__(self, scenario: str = "normal", options: RunOptions | None = None) -> None:
         self._segments = parse_scenario(scenario)
+        self._options = options or RunOptions.from_env()
 
     def _state_for(self, frame: Frame) -> str:
         match = _MARKER.search(frame.jpeg)
@@ -115,6 +122,8 @@ class FakeDetector(Detector):
         result: list[Detection] = []
         for frame in frames:
             if frame.channel != PHONE:
+                if not self._options.webcam:  # VISION_WEBCAM=off: 웹캠 프레임은 분석하지 않는다
+                    continue
                 match = _MARKER.search(frame.jpeg)
                 name = match.group(1).decode("ascii") if match else "FRONT"
                 result.append(
@@ -141,6 +150,20 @@ class FakeDetector(Detector):
             )
         return result
 
+    def scan(self, jpegs: Sequence[bytes]) -> list[list[ObjectDet]]:
+        out: list[list[ObjectDet]] = []
+        for jpeg in jpegs:
+            if not jpeg.startswith(_JPEG_MAGIC):
+                raise ScanDecodeError("not a jpeg")
+            match = _SCAN_MARKER.search(jpeg)
+            labels = [x for x in (match.group(1).decode("ascii").split(",") if match else []) if x in _SCAN_LABELS]
+            found = []
+            for i, label in enumerate(labels):  # 겹치지 않게 가로로 나란히 놓는다
+                x0 = min(0.8, 0.05 + 0.15 * i)
+                found.append(ObjectDet(label, 0.9, Box(x0, 0.2, x0 + 0.12, 0.6)))
+            out.append(found)
+        return out
+
 
 def create_detector(
     kind: str,
@@ -152,20 +175,22 @@ def create_detector(
     verify: bool = True,
     workers: int = 1,
     worker_threads: int = 0,
+    options: RunOptions | None = None,
 ) -> Detector:
     if workers > 1:  # 모델을 프로세스 여러 개에 올려 병렬 처리(실측: 한 프로세스는 CPU 에서 초당 약 5장에서 막힘)
         from pair_vision.models.pool import PooledDetector
 
         spec = {"kind": kind, "scenario": scenario, "models_dir": models_dir, "model_rules": model_rules,
-                "lock_path": lock_path, "verify": verify}
+                "lock_path": lock_path, "verify": verify,
+                "options": options or RunOptions.from_env()}
         return PooledDetector(spec, workers, worker_threads)
     if kind == "fake":
-        return FakeDetector(scenario)
+        return FakeDetector(scenario, options)
     if kind == "real":
         from pair_vision.models.real import RealDetector  # torch 등은 load() 에서야 import 된다
         from pair_vision.rules.config import ModelRules
 
         return RealDetector(
-            models_dir, model_rules or ModelRules(), lock_path=lock_path, verify=verify
+            models_dir, model_rules or ModelRules(), lock_path=lock_path, verify=verify, options=options
         )
     raise ValueError(f"지원하지 않는 detector: {kind!r} (fake | real)")

@@ -59,6 +59,16 @@ def _run(frames: list[Frame]) -> list[Detection]:
     return _DETECTOR.run(frames)
 
 
+def _stage_stats(reset: bool) -> dict[str, tuple[int, float]]:
+    assert _DETECTOR is not None
+    return _DETECTOR.stage_stats(reset)
+
+
+def _scan(jpegs: list[bytes]):
+    assert _DETECTOR is not None
+    return _DETECTOR.scan(jpegs)
+
+
 def _forget(key: str) -> None:
     if _DETECTOR is not None:
         _DETECTOR.forget(key)
@@ -127,6 +137,40 @@ class PooledDetector(Detector):
                 self._execs[idx].submit(_forget, key)
             except Exception:  # noqa: BLE001 - 종료 중이거나 워커가 죽은 경우
                 pass
+
+    def stage_stats(self, reset: bool = False) -> dict[str, tuple[int, float]]:
+        """워커마다의 단계별 누적 시간을 합친다."""
+        total: dict[str, tuple[int, float]] = {}
+        for fut in [ex.submit(_stage_stats, reset) for ex in self._execs]:
+            for name, (n, ms) in fut.result().items():
+                n0, ms0 = total.get(name, (0, 0.0))
+                total[name] = (n0 + n, ms0 + ms)
+        return total
+
+    def _scan_parts(self, jpegs: Sequence[bytes]) -> list[tuple[list[int], Future]]:
+        """방 스캔 사진을 워커들에게 나눠 맡긴다(라운드로빈)."""
+        parts: list[tuple[list[int], Future]] = []
+        for w in range(self._n):
+            idx = list(range(w, len(jpegs), self._n))
+            if idx:
+                parts.append((idx, self._execs[w].submit(_scan, [jpegs[i] for i in idx])))
+        return parts
+
+    def scan(self, jpegs: Sequence[bytes]):
+        out: list = [None] * len(jpegs)
+        for idx, fut in self._scan_parts(jpegs):
+            for i, res in zip(idx, fut.result(), strict=True):
+                out[i] = res
+        return out
+
+    async def scan_async(self, jpegs: Sequence[bytes]):
+        out: list = [None] * len(jpegs)
+        parts = self._scan_parts(jpegs)
+        results = await asyncio.gather(*(asyncio.wrap_future(f) for _, f in parts))
+        for (idx, _), res in zip(parts, results, strict=True):
+            for i, r in zip(idx, res, strict=True):
+                out[i] = r
+        return out
 
     # --- 실행 ---
     def _submit(self, frames: Sequence[Frame]) -> list[tuple[int, Future]]:

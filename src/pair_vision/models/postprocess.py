@@ -9,6 +9,9 @@ from pair_vision.models.base import Box, HandDet, ObjectDet
 
 # D-FINE(COCO) 라벨 -> 서버 라벨. 노트는 COCO book.
 COCO_LABELS = {"keyboard": "keyboard", "mouse": "mouse", "book": "note"}
+# 방 스캔(POST /v1/scan): COCO 라벨 -> 스캔 라벨. person·tv·laptop 기준값은 고정, phone·book 은 규칙 파일 값(휴대폰·노트).
+SCAN_COCO_LABELS = {"person": "person", "cell phone": "phone", "tv": "tv", "laptop": "laptop", "book": "book"}
+SCAN_FIXED_THRESHOLDS = {"person": 0.5, "tv": 0.5, "laptop": 0.5}
 # OWLv2 문장 -> 서버 라벨
 OWL_PROMPTS = {
     "a tablet": "tablet",

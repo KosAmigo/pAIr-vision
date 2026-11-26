@@ -119,3 +119,18 @@ class Detector(ABC):
     @abstractmethod
     def run(self, frames: Sequence[Frame]) -> list[Detection]:
         """프레임 묶음을 같은 순서의 Detection 목록으로 바꾼다."""
+
+    def stage_stats(self, reset: bool = False) -> dict[str, tuple[int, float]]:  # noqa: B027
+        """단계별 누적 시간 {단계: (프레임 수, 총 ms)}. 측정 도구(tools/bench/capacity.py)가 읽는다. 기본은 없음."""
+        return {}
+
+    def scan(self, jpegs: Sequence[bytes]) -> list[list[ObjectDet]]:
+        """방 스캔: 사진마다 person·phone·tv·laptop·book·tablet 물체 목록(좌표는 0~1 비율). 사진을 못 풀면 ScanDecodeError."""
+        raise NotImplementedError(f"{self.name} 는 방 스캔을 지원하지 않습니다")
+
+    async def scan_async(self, jpegs: Sequence[bytes]) -> list[list[ObjectDet]]:
+        return await asyncio.to_thread(self.scan, jpegs)
+
+
+class ScanDecodeError(ValueError):
+    """방 스캔 사진을 읽을 수 없다(깨진 JPEG 등). API 는 400 BAD_SCAN 으로 바꾼다."""
