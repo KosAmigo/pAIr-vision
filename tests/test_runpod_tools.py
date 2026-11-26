@@ -199,3 +199,13 @@ def test_team_summary_diag_and_scan_source(tmp_path):
     assert "| 실효 CPU(cgroup·affinity 반영) | 8 |" in text and "cpu.max=800000 100000" in text
     assert "## ③ 진단" in text and "고른 설정: 스레드 자동" in text
     assert "합성 사진" in text and "정답 없음" in text
+
+
+def test_notebook_template_keeps_required_parts():
+    """템플릿을 고칠 때 이미 고친 부분이 되돌아가지 않게 막는다."""
+    text = (Path(__file__).resolve().parents[1] / "tools" / "runpod" / "pair_all_tests.template.ipynb").read_text(encoding="utf-8")
+    assert "fuzzy=True" not in text  # gdown 은 id= 로만 받는다
+    assert "copy2(" not in text  # /workspace 에서 시각 복사가 막힌다
+    for part in ("EXTRA_DRIVE_URL", "EXTRA_ZIP_BYTES", "EXTRA_ZIP_SHA256", "step_extra", "find_zips", "zip_problem",
+                 "step_diag", "RUN_DIAG", "last_results"):
+        assert part in text, part
