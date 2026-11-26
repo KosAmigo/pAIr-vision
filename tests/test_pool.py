@@ -10,7 +10,10 @@ from conftest import SECRET, new_key
 from pair_vision.api.app import create_app
 from pair_vision.config import Settings
 from pair_vision.models.base import PHONE, WEBCAM, Frame
+from pair_vision.models.fake import FakeDetector as FakeDetectorBase
 from pair_vision.models.pool import PooledDetector
+from pair_vision.evidence.callback import NullSender
+from pair_vision.metrics import Metrics
 from pair_vision.rules.config import parse_rules
 from pair_vision.session.frames import encode_frame
 
@@ -112,3 +115,41 @@ def test_end_to_end_with_two_workers(settings, auth):
                 assert wait_for(lambda: core.pipeline.processed > before)
         assert wait_for(lambda: any(e["type"] == "HANDS_OUT" for e in sent))
     assert SECRET  # conftest 의 비밀은 서명 시험용이라 여기서는 쓰지 않는다
+
+
+def test_cadence_runs_detector_only_at_interval():
+    from pair_vision.models.postprocess import Cadence
+
+    c = Cadence(3000)
+    assert c.due("k", 0)
+    c.mark("k", 0)
+    assert not c.due("k", 2999) and c.due("k", 3000)
+    assert c.due("other", 10)  # 세션마다 따로
+    c.forget("k")
+    assert c.due("k", 100)
+    assert Cadence(0).due("k", 5)  # 0 이면 항상
+
+
+def test_stage_timer_snapshot_and_metrics_endpoint(settings, auth):
+    from pair_vision.models.postprocess import StageTimer
+
+    t = StageTimer()
+    t.add("dfine", 0.1)
+    t.add("dfine", 0.3)
+    assert t.snapshot() == {"dfine": (2, pytest.approx(0.4))}
+
+    class Timed(FakeDetectorBase):
+        def stats(self):
+            return {"dfine": (4.0, 0.4)}
+
+    with TestClient(create_app(settings, detector=Timed(), sink=NullSender(Metrics()))) as tc:
+        text = tc.get("/metrics", headers=auth).text
+    assert 'pair_vision_stage_calls_total{stage="dfine"} 4.0' in text
+    assert 'pair_vision_stage_seconds_total{stage="dfine"} 0.4' in text
+
+
+def test_note_gap_must_cover_dfine_interval():
+    base = {"version": "v", "profiles": {"default": {}}}
+    with pytest.raises(ValueError, match="note.gap_ms"):
+        parse_rules({**base, "models": {"dfine_interval_ms": 10000}})  # 기본 노트 gap 7000 < 2*10000
+    assert parse_rules(base).models.dfine_interval_ms == 3000

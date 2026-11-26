@@ -59,6 +59,10 @@ def _run(frames: list[Frame]) -> list[Detection]:
     return _DETECTOR.run(frames)
 
 
+def _stats() -> dict:
+    return _DETECTOR.stats() if _DETECTOR is not None else {}
+
+
 def _forget(key: str) -> None:
     if _DETECTOR is not None:
         _DETECTOR.forget(key)
@@ -96,6 +100,20 @@ class PooledDetector(Detector):
         infos = [f.result() for f in [ex.submit(_info) for ex in self._execs]]  # 모든 워커가 모델을 올릴 때까지
         self.gpu = any(i["gpu"] for i in infos)
         log.info("워커 %d개 적재 완료 (코어 배정 %s)", self._n, self._slices)
+
+    def stats(self) -> dict[str, tuple[float, float]]:
+        """모든 워커의 단계별 (호출 수, 누적 초)를 합친다."""
+        merged: dict[str, list[float]] = {}
+        for ex in self._execs:
+            try:
+                part = ex.submit(_stats).result(timeout=5)
+            except Exception:  # noqa: BLE001 - 워커가 죽었거나 바쁘면 이번 집계에서 뺀다
+                continue
+            for stage, (calls, seconds) in part.items():
+                item = merged.setdefault(stage, [0.0, 0.0])
+                item[0] += calls
+                item[1] += seconds
+        return {k: (v[0], v[1]) for k, v in merged.items()}
 
     def close(self) -> None:
         for ex in self._execs:

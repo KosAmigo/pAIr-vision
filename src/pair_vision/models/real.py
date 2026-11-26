@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import io
 import logging
+import time
 from collections.abc import Sequence
 from pathlib import Path
 
@@ -20,6 +21,8 @@ from pair_vision.models.base import PHONE, Box, Detection, Detector, Frame, Hand
 from pair_vision.models.lock import load_lock, verify_lock
 from pair_vision.models.postprocess import (
     COCO_LABELS,
+    Cadence,
+    StageTimer,
     RTMW_DET_FILE,
     RTMW_POSE_FILE,
     OWL_PROMPTS,
@@ -55,7 +58,10 @@ class RealDetector(Detector):
         self._rules = rules
         self._lock_path = lock_path
         self._verify = verify
-        self._last_owl_ms: dict[str, int] = {}
+        self._owl_cadence = Cadence(rules.owl_interval_ms)
+        self._coco_cadence = Cadence(rules.dfine_interval_ms)
+        self._last_coco: dict[str, dict[str, ObjectDet]] = {}  # 세션별 직전 D-FINE 결과(주기 사이에 재사용)
+        self._timer = StageTimer()
         self._webcam_frames: dict[str, int] = {}  # 웹캠 프레임 수(포즈를 N 프레임마다만 돌리려고)
         self._last_pose: dict[str, object] = {}  # 직전 포즈 랜드마크(사이 프레임에서 재사용)
         self.gpu = False
@@ -133,7 +139,9 @@ class RealDetector(Detector):
         )
 
     def forget(self, key: str) -> None:
-        self._last_owl_ms.pop(key, None)
+        self._owl_cadence.forget(key)
+        self._coco_cadence.forget(key)
+        self._last_coco.pop(key, None)
         self._webcam_frames.pop(key, None)
         self._last_pose.pop(key, None)
 
@@ -151,22 +159,34 @@ class RealDetector(Detector):
             raise RuntimeError("배치의 모든 프레임 분석 실패")
         return results
 
-    def _owl_due(self, frame: Frame) -> bool:
-        last = self._last_owl_ms.get(frame.key)
-        return last is None or frame.recv_ms - last >= self._rules.owl_interval_ms
+    def stats(self) -> dict[str, tuple[float, float]]:
+        return self._timer.snapshot()
+
+    def _timed(self, stage: str, start: float) -> None:
+        self._timer.add(stage, time.perf_counter() - start)
 
     def _run_phone(self, frame: Frame) -> Detection:
         import numpy as np
         from PIL import Image
 
+        t = time.perf_counter()
         image = Image.open(io.BytesIO(frame.jpeg)).convert("RGB")
-        coco = self._detect_coco(image)
+        self._timed("decode", t)
+        if self._coco_cadence.due(frame.key, frame.recv_ms) or frame.key not in self._last_coco:
+            t = time.perf_counter()
+            self._last_coco[frame.key] = best_per_label(self._detect_coco(image))
+            self._coco_cadence.mark(frame.key, frame.recv_ms)  # 성공했을 때만 갱신(실패하면 다음 프레임에 다시)
+            self._timed("dfine", t)
+        best = self._last_coco[frame.key]
+        t = time.perf_counter()
         hands = self._rtmw.hands(np.asarray(image)) if self._rtmw is not None else self._detect_hands(image)
+        self._timed("hands", t)
         owl: list[ObjectDet] = []
-        if self._owl_due(frame):
+        if self._owl_cadence.due(frame.key, frame.recv_ms):
+            t = time.perf_counter()
             owl = self._detect_owl(image)
-            self._last_owl_ms[frame.key] = frame.recv_ms  # 성공했을 때만 갱신(실패하면 다음 프레임에 다시)
-        best = best_per_label(coco)
+            self._owl_cadence.mark(frame.key, frame.recv_ms)  # 성공했을 때만 갱신
+            self._timed("owlv2", t)
         extra = [o for o in (*best.values(), *best_per_label(owl).values()) if o.label not in ("keyboard", "mouse")]
         return Detection(
             key=frame.key, channel=frame.channel, seq=frame.seq, recv_ms=frame.recv_ms,
@@ -181,12 +201,14 @@ class RealDetector(Detector):
         import numpy as np
         from PIL import Image
 
+        t = time.perf_counter()
         image = Image.open(io.BytesIO(frame.jpeg)).convert("RGB")
+        self._timed("decode", t)
         if self._rtmw is not None:
-            return Detection(
-                key=frame.key, channel=frame.channel, seq=frame.seq, recv_ms=frame.recv_ms,
-                webcam=self._rtmw.webcam(np.asarray(image)),
-            )
+            t = time.perf_counter()
+            features = self._rtmw.webcam(np.asarray(image))
+            self._timed("webcam", t)
+            return Detection(key=frame.key, channel=frame.channel, seq=frame.seq, recv_ms=frame.recv_ms, webcam=features)
         mp_image = self._mp.Image(self._mp.ImageFormat.SRGB, np.asarray(image))
         face = self._face.detect(mp_image)
         count_before = self._webcam_frames.get(frame.key, 0)

@@ -34,7 +34,7 @@ class ObjectRule:
 # 설계 문서에 값이 없어 보수적으로 둔 시작값(실측 전 임시). 근거는 README "가정한 값".
 DEFAULT_OBJECT_RULES: dict[str, ObjectRule] = {
     "tablet": ObjectRule(min_ms=10000, gap_ms=10000, cooldown_ms=30000),
-    "note": ObjectRule(min_ms=10000, gap_ms=3000, cooldown_ms=30000),
+    "note": ObjectRule(min_ms=10000, gap_ms=7000, cooldown_ms=30000),  # D-FINE 주기(3초)의 2배 이상
     "smartwatch": ObjectRule(min_ms=15000, gap_ms=10000, cooldown_ms=60000),
     "many_hands": ObjectRule(min_ms=5000, gap_ms=3000, cooldown_ms=30000, shadow=True),
 }
@@ -94,6 +94,8 @@ class ModelRules:
     smartwatch_threshold: float = 0.5
     phone_threshold: float = 0.5
     owl_interval_ms: int = 5000
+    # D-FINE(키보드·마우스·노트): 세션마다 이 주기로만 돌리고 사이에는 직전 결과를 재사용한다(0 = 매 프레임). 책상 위 물체는 거의 안 움직이고 GPU 시간의 가장 큰 몫이다.
+    dfine_interval_ms: int = 3000
     hand_threshold: float = 0.5
     max_hands: int = 4
     hand_merge_distance: float = 0.06  # 이보다 가까운 두 손은 하나로(프레임 비율, 점수 높은 쪽 유지)
@@ -234,6 +236,7 @@ def _parse_models(raw: Mapping) -> ModelRules:
         **extra,
         pose_every=pose_every,
         owl_interval_ms=_positive("models", "owl_interval_ms", raw.get("owl_interval_ms", d.owl_interval_ms)),
+        dfine_interval_ms=_positive("models", "dfine_interval_ms", raw.get("dfine_interval_ms", d.dfine_interval_ms)),
         max_hands=max_hands,
         hand_merge_distance=float(merge),
     )
@@ -255,6 +258,10 @@ def parse_rules(data: Mapping) -> RulesConfig:
                     f"규칙 설정 objects.{label}.gap_ms 는 models.owl_interval_ms 의 2배 이상이어야 합니다 "
                     f"(프로필 {profile.name})."
                 )
+        if profile.objects["note"].gap_ms < 2 * models.dfine_interval_ms:
+            raise ValueError(
+                f"규칙 설정 objects.note.gap_ms 는 models.dfine_interval_ms 의 2배 이상이어야 합니다 (프로필 {profile.name})."
+            )
     return RulesConfig(version=version, profiles=profiles, models=models)
 
 

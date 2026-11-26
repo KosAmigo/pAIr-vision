@@ -35,6 +35,9 @@ def readyz(core: Core = Depends(get_core)) -> JSONResponse:
 @router.get("/metrics", dependencies=[Depends(require_auth)])
 def metrics(core: Core = Depends(get_core)) -> Response:
     core.metrics.sessions.set(len(core.registry))
+    for stage, (calls, seconds) in core.detector.stats().items():
+        core.metrics.stage_calls.labels(stage).set(calls)
+        core.metrics.stage_seconds.labels(stage).set(seconds)
     return Response(core.metrics.render(), media_type="text/plain; version=0.0.4")
 
 

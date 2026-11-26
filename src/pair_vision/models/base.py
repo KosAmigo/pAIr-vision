@@ -106,6 +106,10 @@ class Detector(ABC):
     def load(self) -> None:  # noqa: B027 - 가짜 구현은 적재할 것이 없다
         """모델 적재. 끝나면 /readyz 의 modelsLoaded 가 참이 된다."""
 
+    def stats(self) -> dict[str, tuple[float, float]]:
+        """단계별 (호출 수, 누적 초). 기본은 없음."""
+        return {}
+
     def close(self) -> None:  # noqa: B027 - 서버 종료 때 자원(워커 프로세스 등)을 정리한다
         """서버 종료 알림."""
 

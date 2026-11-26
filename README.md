@@ -153,3 +153,9 @@ $env:VISION_RULES_PATH = "configs/rules.local-cpu.yaml"    # CPU 전용(아래 �
 - **임시 보정값:** RTMW 6점 모델의 yaw 는 실제보다 2배쯤 크게·흔들려 `yaw_scale: 0.55`(MediaPipe 값과의 비교, **한 사람 10장 기준**). 다른 사람·자세로 재확인이 필요하다. 시선(`GAZE_AWAY`)은 계속 끈다.
 - **GPU:** ONNX Runtime GPU(CUDA) 로 돌려야 효과가 난다. bootstrap.sh 가 GPU 가 있으면 `onnxruntime-gpu` 로 교체한다. **GPU Pod 에서는 아직 실행해 보지 못했다**(이 PC 는 CPU). CUDA 를 못 잡으면 CPU 로 돌고 `/readyz` 의 `gpu` 가 `false` 로 나온다.
 - 속도는 이 PC(CPU)에서 프레임당 약 0.15~0.35초(YOLOX+RTMW)였다. GPU 수치는 Pod 에서 용량 측정으로 확인한다.
+
+### GPU 시간 줄이기 (2026-11-26, 워커 6개로도 4명 OK·8명 부족이었던 실측 뒤)
+- **가설:** 응시자 1명당 GPU 시간이 D-FINE(프레임마다 약 97ms) + OWLv2(5초마다 155ms) + RTMW 로 초당 약 0.17초라 GPU 하나가 약 6명에서 포화된다(계산이고 단계별 실측은 이 변경 뒤에 나온다). 프로세스를 늘려도 GPU 시간은 나눠 쓸 뿐이다.
+- **D-FINE 주기화(`models.dfine_interval_ms: 3000`):** 책상 위 키보드·마우스·노트는 거의 안 움직여서(설계 §7-3 "정지 박스 캐시") 세션마다 3초에 한 번만 돌리고 사이에는 직전 결과를 재사용한다. 노트 이벤트의 끊김 허용을 3초에서 7초로 늘렸다(D-FINE 주기의 2배 이상, 설정 검사). 0 이면 예전처럼 매 프레임.
+- **단계별 시간 측정:** `/metrics` 에 `pair_vision_stage_seconds_total{stage}`·`..._calls_total{stage}`(decode·dfine·hands·owlv2·webcam). 노트북 용량 측정이 단계마다 평균 ms 와 "초당 점유초"를 표로 낸다. 점유 합이 워커 수에 가까우면 모델 계산이 병목이다.
+- 아직 안 한 것(필요하면 이 순서): D-FINE·OWLv2 반정밀도(fp16), 세션을 묶은 GPU 배치 추론, OWLv2 주기 늘리기, 전송 간격 줄이기, 서버 2대.

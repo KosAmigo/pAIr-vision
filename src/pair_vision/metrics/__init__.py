@@ -25,6 +25,8 @@ class Metrics:
         self.callback_dropped = Counter("pair_vision_callback_dropped_total", "버린 콜백", ["reason"], registry=r)
         self.callback_queue = Gauge("pair_vision_callback_queue_size", "콜백 대기 건수", registry=r)
         self.gpu_utilization = Gauge("pair_vision_gpu_utilization_ratio", "GPU 사용률(0~1, 가짜 모델은 0)", registry=r)
+        self.stage_seconds = Gauge("pair_vision_stage_seconds_total", "단계별 누적 처리 시간(초, 모든 워커 합)", ["stage"], registry=r)
+        self.stage_calls = Gauge("pair_vision_stage_calls_total", "단계별 누적 호출 수(모든 워커 합)", ["stage"], registry=r)
         self.detector_errors = Counter("pair_vision_detector_errors_total", "모델 실행 오류", registry=r)
 
     def render(self) -> bytes:

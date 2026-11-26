@@ -19,7 +19,7 @@ profiles:
     # tablet·smartwatch 는 OWLv2 가 몇 초 주기로만 보므로 gap_ms 는 models.owl_interval_ms 의 2배 이상이어야 한다.
     objects:
       tablet:     { min_ms: 10000, gap_ms: 10000, cooldown_ms: 30000 }
-      note:       { min_ms: 10000, gap_ms: 3000,  cooldown_ms: 30000 }
+      note:       { min_ms: 10000, gap_ms: 7000,  cooldown_ms: 30000 }  # gap 은 D-FINE 주기(3초)의 2배 이상
       smartwatch: { min_ms: 15000, gap_ms: 10000, cooldown_ms: 60000 }
       # 손 3개 이상: 계약에 없는 유형(D-7)이라 shadow=true(콜백 없음, 지표·로그만)
       many_hands: { min_ms: 5000,  gap_ms: 3000,  cooldown_ms: 30000, shadow: true }
@@ -56,6 +56,7 @@ models:
   tablet_threshold: 0.5      # OWLv2
   smartwatch_threshold: 0.5
   phone_threshold: 0.5       # 다른 휴대폰(이벤트 유형 없음 - 기록만)
+  dfine_interval_ms: 3000    # D-FINE 를 세션마다 3초 주기로(사이에는 직전 박스 재사용). 0 이면 매 프레임
   owl_interval_ms: 5000      # OWLv2 를 세션마다 이 간격으로
   hand_threshold: 0.5        # MediaPipe Hands 감지 기준값
   max_hands: 4

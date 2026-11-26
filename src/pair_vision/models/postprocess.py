@@ -21,6 +21,39 @@ OWL_PROMPTS = {
 }
 
 
+class Cadence:
+    """세션(key)마다 N ms 주기로만 실행하게 하는 판단. interval_ms 가 0 이면 항상 실행."""
+
+    def __init__(self, interval_ms: int) -> None:
+        self.interval_ms = interval_ms
+        self._last: dict[str, int] = {}
+
+    def due(self, key: str, now_ms: int) -> bool:
+        last = self._last.get(key)
+        return self.interval_ms <= 0 or last is None or now_ms - last >= self.interval_ms
+
+    def mark(self, key: str, now_ms: int) -> None:
+        self._last[key] = now_ms
+
+    def forget(self, key: str) -> None:
+        self._last.pop(key, None)
+
+
+class StageTimer:
+    """단계별 (호출 수, 누적 초). 어느 단계가 시간을 먹는지 /metrics 와 용량 측정 표로 보려고 쓴다."""
+
+    def __init__(self) -> None:
+        self._data: dict[str, list[float]] = {}
+
+    def add(self, stage: str, seconds: float) -> None:
+        item = self._data.setdefault(stage, [0.0, 0.0])
+        item[0] += 1
+        item[1] += seconds
+
+    def snapshot(self) -> dict[str, tuple[float, float]]:
+        return {k: (v[0], v[1]) for k, v in self._data.items()}
+
+
 def box_in_image(box: Sequence[float], width: int, height: int) -> Box:
     """픽셀 박스를 사진 크기로 나눠 0~1 로 바꾼다(사진 밖은 잘라낸다).
 
