@@ -161,7 +161,7 @@ def photo_dirs(ctx: Ctx) -> dict[str, Path]:
             target = out / kind / p.name
             if target.exists():
                 target = out / kind / f"{p.parent.name}_{p.name}"
-            shutil.copy2(p, target)
+            shutil.copyfile(p, target)
             if p in extra:
                 ctx.extra_names.add(target.name)
         found[kind] = out / kind
@@ -176,8 +176,29 @@ def has_real_photos(ctx: Ctx) -> bool:
 
 
 def find_labels(ctx: Ctx) -> Path | None:
+    """정답 CSV 를 찾는다. 사진 폴더의 labels.csv 와 extra/labels.csv 가 있으면 합쳐 results/labels_all.csv 로 쓴다."""
+    import csv
+
     roots = [ctx.root] + [Path(r) if Path(r).is_absolute() else ctx.root / r for r in PHOTO_ROOTS]
-    return next((r / "labels.csv" for r in roots if (r / "labels.csv").is_file()), None)
+    root = next((r for r in roots if (r / "labels.csv").is_file() or (r / "extra" / "labels.csv").is_file()), None)
+    if root is None:
+        return None
+    files = [p for p in (root / "labels.csv", root / "extra" / "labels.csv") if p.is_file()]
+    if len(files) == 1:
+        return files[0]
+    fields: list[str] = []
+    rows: list[dict] = []
+    for path in files:
+        with path.open(newline="", encoding="utf-8-sig") as f:
+            reader = csv.DictReader(f)
+            fields += [n for n in (reader.fieldnames or []) if n not in fields]
+            rows += list(reader)
+    merged = ctx.results / "labels_all.csv"
+    with merged.open("w", newline="", encoding="utf-8-sig") as f:
+        writer = csv.DictWriter(f, fieldnames=fields, restval="")
+        writer.writeheader()
+        writer.writerows(rows)
+    return merged
 
 
 def free_port() -> int:
@@ -270,7 +291,7 @@ def step_compare(ctx: Ctx) -> str:
     warmup, repeat = ("1", "1") if ctx.quick else ("5", "10")
     args = [ctx.py, "-m", "tools.bench.compare", "--images", str(photos), "--models", "dfine-s,owlv2,mediapipe-hands",
             "--hand-conf", "0.5,0.3,0.1", "--warmup", warmup, "--repeat", repeat, "--json", str(ctx.results / "compare.json")]
-    if ctx.quick:
+    if ctx.quick and find_labels(ctx) is None:  # 정답이 있으면 ⑦ 정확도 평가를 위해 모든 사진을 돈다
         args += ["--limit", "4"]
     rc = sh(ctx, args, "05_compare.log", env=ctx.env(VISION_MODELS_DIR=str(ctx.models)), timeout=3600)
     if rc != 0:
@@ -333,7 +354,7 @@ def _split_labels(labels: Path, names: set[str], out: Path, keep_in: bool) -> in
 def step_eval(ctx: Ctx) -> str:
     labels = find_labels(ctx)
     if labels is None:
-        raise Skip("labels.csv 없음(/workspace/photos/labels.csv 또는 번들 --labels)")
+        raise Skip("labels.csv 없음(/workspace/photos/labels.csv, /workspace/photos/extra/labels.csv 또는 번들 --labels)")
     if not (ctx.results / "compare.json").exists():
         raise Skip("⑤ compare 결과(compare.json)가 없음")
     photo_dirs(ctx)  # extra 이름 목록을 채운다
