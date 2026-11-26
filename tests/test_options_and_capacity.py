@@ -44,6 +44,8 @@ def test_combos_and_parsing():
     assert len(combos) == 8
     assert capacity.parse_choices("off,on,off", ("off", "on")) == [False, True]
     assert capacity.parse_ints("10, 20") == [10, 20]
+    assert capacity.parse_threads("0, 4,4") == [0, 4]
+    assert len(capacity.build_combos([1], [True], [True], [True], [0, 4, 8])) == 3
     with pytest.raises(ValueError):
         capacity.parse_choices("maybe", ("off", "on"))
 
@@ -54,7 +56,7 @@ def row(workers, n, fps):
 
 def test_max_examinees_and_markdown():
     rows = [row(1, 10, 1.0), row(1, 20, 0.95), row(1, 30, 0.4), row(2, 10, 0.5)]
-    assert capacity.max_examinees(rows) == {(1, False, False, True): 20, (2, False, False, True): 0}
+    assert capacity.max_examinees(rows) == {(1, False, False, True, 0): 20, (2, False, False, True, 0): 0}
     md = capacity.render_markdown(rows, "테스트")
     assert md.index("최대 인원") < md.index("## 상세")
     assert "20명" in md and "10명 미만" in md
@@ -68,3 +70,50 @@ def test_small_real_run_with_fake_detector(tmp_path):
     text = out.with_suffix(".csv").read_text(encoding="utf-8-sig")
     assert text.count("\n") == 3 and "fps_min" in text
     assert "최대 인원" in out.with_suffix(".md").read_text(encoding="utf-8")
+
+
+def test_effective_cpus_from_fake_cgroup(tmp_path, monkeypatch):
+    from pair_vision.models import cpuinfo
+
+    monkeypatch.setattr(cpuinfo.os, "cpu_count", lambda: 96)
+    monkeypatch.setattr(cpuinfo.os, "sched_getaffinity", lambda _pid: set(range(96)), raising=False)
+    assert cpuinfo.effective_cpus(tmp_path) == 96  # cgroup 파일이 없으면 제한 없음
+    (tmp_path / "cpu.max").write_text("800000 100000\n")  # v2: 8 CPU
+    assert cpuinfo.effective_cpus(tmp_path) == 8
+    assert cpuinfo.default_threads(2, tmp_path) == 4 and cpuinfo.default_threads(100, tmp_path) == 1
+    (tmp_path / "cpu.max").write_text("250000 100000\n")  # 2.5 -> 올림 3
+    assert cpuinfo.effective_cpus(tmp_path) == 3
+    (tmp_path / "cpu.max").write_text("max 100000\n")
+    assert cpuinfo.effective_cpus(tmp_path) == 96
+    monkeypatch.setattr(cpuinfo.os, "sched_getaffinity", lambda _pid: {0, 1, 2, 3}, raising=False)  # affinity 가 더 작으면 그쪽
+    assert cpuinfo.effective_cpus(tmp_path) == 4
+    assert cpuinfo.resolve_threads(0, 2, tmp_path) == 2 and cpuinfo.resolve_threads(6, 2, tmp_path) == 6
+
+
+def test_effective_cpus_cgroup_v1(tmp_path, monkeypatch):
+    from pair_vision.models import cpuinfo
+
+    monkeypatch.setattr(cpuinfo.os, "cpu_count", lambda: 64)
+    monkeypatch.setattr(cpuinfo.os, "sched_getaffinity", lambda _pid: set(range(64)), raising=False)
+    (tmp_path / "cpu").mkdir()
+    (tmp_path / "cpu" / "cpu.cfs_quota_us").write_text("-1\n")
+    (tmp_path / "cpu" / "cpu.cfs_period_us").write_text("100000\n")
+    assert cpuinfo.effective_cpus(tmp_path) == 64  # -1 = 제한 없음
+    (tmp_path / "cpu" / "cpu.cfs_quota_us").write_text("1200000\n")
+    info = cpuinfo.cpu_info(tmp_path)
+    assert info.effective == 12 and "cfs_quota" in info.cgroup_raw and "실효 CPU 12" in info.describe()
+
+
+def test_capacity_records_threads_and_cap(tmp_path):
+    out = tmp_path / "cap"
+    rc = capacity.main(["--detector", "fake", "--workers", "1,2", "--batch", "off", "--fp16", "off", "--webcam", "off",
+                        "--worker-threads", "0,3", "--thread-cap", "2", "--examinees", "2", "--duration", "1.5", "--warmup", "0.3",
+                        "--out", str(out)])
+    assert rc == 0
+    import csv
+
+    rows = list(csv.DictReader(out.with_suffix(".csv").read_text(encoding="utf-8-sig").splitlines()))
+    assert len(rows) == 4 and {"threads", "cpu_eff", "cgroup"} <= set(rows[0])
+    assert {r["workers"] for r in rows} == {"1", "2"}
+    md = out.with_suffix(".md").read_text(encoding="utf-8")
+    assert "스레드/워커" in md and "실효 CPU" in md

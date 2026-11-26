@@ -22,6 +22,7 @@ from concurrent.futures import Future, ProcessPoolExecutor
 from concurrent.futures.process import BrokenProcessPool
 
 from pair_vision.models.base import Detection, Detector, Frame
+from pair_vision.models.cpuinfo import cpu_info
 
 log = logging.getLogger("pair_vision.pool")
 
@@ -85,9 +86,12 @@ class PooledDetector(Detector):
         self._n = workers
         self.gpu = False
         cpus = sorted(os.sched_getaffinity(0)) if hasattr(os, "sched_getaffinity") else []
-        # 워커마다 쓸 코어 수: 지정값 > (사용 가능 코어 / 워커 수). 코어 목록을 못 얻는 OS(윈도우)는 전체 코어 수로 나눈다.
-        per = threads or max(1, (len(cpus) or os.cpu_count() or 1) // workers)
+        # 워커마다 쓸 코어 수: 지정값 > (실효 CPU / 워커 수). 실효 CPU 는 cgroup 한도·affinity 중 가장 작은 값
+        # (컨테이너가 os.cpu_count()=96 을 보여 줘도 실제로는 훨씬 적게 받는다: 스레드 과다는 크게 느려진다)
+        self.cpu = cpu_info()
+        per = threads or max(1, self.cpu.effective // workers)
         self._threads = per
+        self.threads = per
         self._slices = [[cpus[(i * per + j) % len(cpus)] for j in range(per)] if cpus else [] for i in range(workers)]
         self._ctx = multiprocessing.get_context("spawn")  # CUDA 는 fork 와 같이 쓸 수 없다
         self._execs: list[ProcessPoolExecutor] = []

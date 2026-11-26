@@ -67,7 +67,9 @@ class RealDetector(Detector):
         lock_path: str | Path | None = None,
         verify: bool = True,
         options: RunOptions | None = None,
+        threads: int = 0,
     ) -> None:
+        self._threads = threads  # 0 이면 실효 CPU(cgroup 한도 반영) 만큼
         self._dir = Path(models_dir)
         self._rules = rules
         self._lock_path = lock_path
@@ -80,6 +82,7 @@ class RealDetector(Detector):
         self._webcam_frames: dict[str, int] = {}  # 웹캠 프레임 수(포즈를 N 프레임마다만 돌리려고)
         self._last_pose: dict[str, object] = {}  # 직전 포즈 랜드마크(사이 프레임에서 재사용)
         self.gpu = False
+        self.threads = 0
 
     # --- 적재 ---
     def load(self) -> None:
@@ -99,6 +102,10 @@ class RealDetector(Detector):
         )
 
         self._torch, self._mp = torch, mp
+        from pair_vision.models.cpuinfo import resolve_threads
+
+        self.threads = resolve_threads(self._threads, 1)  # 워커 1개(풀 없음)일 때도 실효 CPU 기준으로 스레드를 정한다
+        torch.set_num_threads(self.threads)
         self._device = "cuda" if torch.cuda.is_available() else "cpu"
         self.gpu = self._device == "cuda"
         self._dfine_proc = AutoImageProcessor.from_pretrained(self._dir / DFINE_DIR)

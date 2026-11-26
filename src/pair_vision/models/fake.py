@@ -191,6 +191,7 @@ def create_detector(
         from pair_vision.rules.config import ModelRules
 
         return RealDetector(
-            models_dir, model_rules or ModelRules(), lock_path=lock_path, verify=verify, options=options
+            models_dir, model_rules or ModelRules(), lock_path=lock_path, verify=verify, options=options,
+            threads=worker_threads,
         )
     raise ValueError(f"지원하지 않는 detector: {kind!r} (fake | real)")

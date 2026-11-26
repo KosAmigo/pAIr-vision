@@ -102,6 +102,7 @@ class Detector(ABC):
 
     name: str = "abstract"
     gpu: bool = False
+    threads: int = 0  # 이 Detector(워커 하나)가 쓰는 스레드 수(측정 기록용)
 
     def load(self) -> None:  # noqa: B027 - 가짜 구현은 적재할 것이 없다
         """모델 적재. 끝나면 /readyz 의 modelsLoaded 가 참이 된다."""

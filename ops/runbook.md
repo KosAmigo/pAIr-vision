@@ -108,9 +108,10 @@ RunPod PyTorch 템플릿 Pod 의 JupyterLab 에 총괄 노트북을 복사해 �
 | ③ | GPU·패키지 버전·모델 sha256 확인 | `env.txt` |
 | ④ | pytest 전체 | `logs/04_pytest.log` |
 | ⑤ | 모델 속도 비교 | `compare.md/json` |
-| ⑥ | 용량 측정(QUICK 이면 1조합) | `capacity_<GPU>.md/csv` |
+| ⑥-0 | 진단(약 5분): 실효 CPU(cgroup 반영)와 스레드·배치·fp16 5가지를 재서 가장 빠른 설정을 고름 | `diag.md/json` |
+| ⑥ | 용량 측정: 고른 설정으로 workers {1,2,4} × 웹캠 {server,off} × 인원 {10,20,30,40}(QUICK 약 10~15분, 전체는 조합 전부 1~2시간) | `capacity_<GPU>.md/csv` |
 | ⑦ | 정확도 평가(labels.csv 있을 때, 내 사진·extra 따로) | `eval_mine.md/csv`, `eval_extra.md/csv` |
-| ⑧ | 실제 모델 서버를 띄워 `/v1/scan` 호출(+잘못된 요청 400 확인) | `scan.json` |
+| ⑧ | 실제 모델 서버를 띄워 `/v1/scan` 호출(+잘못된 요청 400 확인). 사진은 scan/ → 공개 사진 extra/coco(최대 17장) → 합성 순, 정답이 있으면 사람 수 일치율도 적음 | `scan.json` |
 | ⑨ | replay + sink 로 스트림·콜백 재생 | `replay.md`, `logs/sink.log` |
 | ⑩ | 요약과 결과 zip | `summary.md` |
 

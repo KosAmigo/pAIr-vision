@@ -45,6 +45,8 @@ class Ctx:
     results: Path = field(init=False)
     work: Path = field(init=False)
     extra_names: set = field(default_factory=set)  # photos/extra/ 에서 온 사진 이름(정확도를 출처별로 나누려고)
+    detector: str = "real"  # 용량·진단에 쓸 detector(PC 에서 도구 확인할 때만 fake)
+    diag: dict | None = None  # ⑥-0 진단이 고른 설정(⑥ 용량이 이어 쓴다)
 
     def __post_init__(self) -> None:
         self.root = Path(self.root)
@@ -270,6 +272,18 @@ def free_port() -> int:
         return s.getsockname()[1]
 
 
+def cpu_info_of(ctx: Ctx):
+    """실효 CPU 정보. 모델 패키지를 import 하지 않고 cpuinfo.py 만 파일로 불러온다(표준 라이브러리만 씀)."""
+    import importlib.util
+
+    path = ctx.root / "src" / "pair_vision" / "models" / "cpuinfo.py"
+    spec = importlib.util.spec_from_file_location("pair_cpuinfo", path)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules["pair_cpuinfo"] = module  # dataclass 가 모듈을 찾을 수 있게
+    spec.loader.exec_module(module)  # type: ignore[union-attr]
+    return module.cpu_info()
+
+
 # --- ② 환경 ---
 def step_env(ctx: Ctx) -> str:
     if platform.system() == "Linux" and shutil.which("bash"):
@@ -315,7 +329,10 @@ def step_gpu_models(ctx: Ctx) -> str:
     smi = ""
     if shutil.which("nvidia-smi"):
         smi = subprocess.run(["nvidia-smi"], capture_output=True, text=True, check=False).stdout
+    cpu = cpu_info_of(ctx)
     lines = [f"날짜: {datetime.now():%Y-%m-%d %H:%M}", f"플랫폼: {platform.platform()}", f"코어: {os.cpu_count()}",
+             f"실효CPU: {cpu.effective}", f"affinity: {cpu.affinity if cpu.affinity is not None else '-'}",
+             f"cgroup: {cpu.cgroup_raw or '제한 없음/읽지 못함'}",
              f"python: {info['python']}", *(f"{k}: {v}" for k, v in info["pkgs"].items()),
              f"CUDA 사용 가능: {info['cuda']} {info['gpu']} (torch CUDA {info.get('torch_cuda')})", "", smi]
     (ctx.results / "env.txt").write_text("\n".join(lines), encoding="utf-8")
@@ -364,22 +381,137 @@ def step_compare(ctx: Ctx) -> str:
     return "compare.md / compare.json"
 
 
-# --- ⑥ 용량 측정 ---
-def step_capacity(ctx: Ctx) -> str:
+# --- ⑥-0 진단: 스레드·배치·fp16 중 어느 설정이 빠른가 ---
+DIAG_CONFIGS = (  # (이름, 스레드, 배치, fp16). 스레드: all=os.cpu_count(), auto=실효 CPU, 숫자=그 값
+    ("스레드 모든 코어", "all", False, False),
+    ("스레드 자동", "auto", False, False),
+    ("스레드 4", "4", False, False),
+    ("자동 + 배치", "auto", True, False),
+    ("자동 + 배치 + fp16", "auto", True, True),
+)
+CPU_DIAG_CONFIGS = DIAG_CONFIGS[1:2] + DIAG_CONFIGS[3:4]  # CPU 는 느려서 둘만(fp16 은 의미 없음)
+DIAG_SCALE_GPU = ("--examinees", "5", "--duration", "15", "--warmup", "4")
+DIAG_SCALE_CPU = ("--examinees", "1", "--duration", "6", "--warmup", "2")
+STAGE_NAMES = ("decode", "dfine", "owl", "hands", "face", "pose")
+
+
+def _f(v) -> float | None:
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return None
+
+
+def choose_setting(entries: list[dict]) -> dict:
+    """진단 결과에서 가장 빠른 설정. fps(응시자당, 0.05 단위로 같은 값 취급)가 높고, 같으면 프레임당 단계 ms 합이 작은 쪽."""
+    ok = [e for e in entries if e.get("fps") is not None]
+    if not ok:
+        raise RuntimeError("진단에서 측정에 성공한 설정이 없음")
+    return min(ok, key=lambda e: (-round(e["fps"] * 20), e["total_ms"] if e.get("total_ms") is not None else float("inf")))
+
+
+def _diag_entry(name: str, spec: str, batch: bool, fp16: bool, row: dict | None, note: str = "") -> dict:
+    ms = {s: _f(row.get(f"ms_{s}")) for s in STAGE_NAMES} if row else {}
+    total = round(sum(v for v in ms.values() if v is not None), 1) if any(v is not None for v in ms.values()) else None
+    return {"name": name, "threads_spec": spec, "threads": (row or {}).get("threads", ""), "batch": batch, "fp16": fp16,
+            "fps": _f(row.get("fps_min")) if row else None, "gpu_util_pct": _f((row or {}).get("gpu_util_pct")),
+            "lat_p95_ms": _f((row or {}).get("lat_p95_ms")), "ms": ms, "total_ms": total, "note": note or (row or {}).get("note", "")}
+
+
+def render_diag(entries: list[dict], chosen: dict, cpu_text: str) -> str:
+    lines = ["# ⑥-0 진단: 스레드·배치·fp16", "", cpu_text, "",
+             "workers 1, 웹캠 off, 응시자 5명(CPU 는 1명), 휴대폰 사진만. 응시자당 fps 가 같으면 단계 ms 합이 작은 쪽을 고름.", "",
+             "| 설정 | 스레드 | 배치 | fp16 | fps | GPU % | p95 ms | " + " | ".join(f"{s} ms" for s in STAGE_NAMES) + " | ms 합 | 비고 |",
+             "|" + "---|" * (7 + len(STAGE_NAMES) + 2)]
+    for e in entries:
+        cells = [e["name"], e["threads"] or "-", "on" if e["batch"] else "off", "on" if e["fp16"] else "off",
+                 e["fps"], e["gpu_util_pct"], e["lat_p95_ms"], *(e["ms"].get(s) for s in STAGE_NAMES), e["total_ms"], e["note"]]
+        lines.append("| " + " | ".join("-" if c is None or c == "" else str(c) for c in cells) + " |")
+    lines += ["", f"**고른 설정: {chosen['name']}** (스레드 {chosen['threads'] or chosen['threads_spec']}, "
+              f"배치 {'on' if chosen['batch'] else 'off'}, fp16 {'on' if chosen['fp16'] else 'off'}) -> ⑥ 용량이 이 값을 씀"]
+    return "\n".join(lines) + "\n"
+
+
+def step_diag(ctx: Ctx) -> str:
     require_ready(ctx)
+    import csv
+
     dirs = photo_dirs(ctx)
-    out = ctx.results / f"capacity_{ctx.gpu_name}"
-    args = [ctx.py, "-u", "-m", "tools.bench.capacity", "--detector", "real", "--photos", str(dirs["phone"]),
-            "--models-dir", str(ctx.models), "--out", str(out)]
+    cpu = cpu_info_of(ctx)
+    configs = DIAG_CONFIGS if ctx.gpu else CPU_DIAG_CONFIGS
+    scale = list(DIAG_SCALE_GPU if ctx.gpu else DIAG_SCALE_CPU)
+    out_dir = ctx.results / "diag"
+    out_dir.mkdir(exist_ok=True)
+    entries: list[dict] = []
+    seen: dict[tuple, dict] = {}
+    for i, (name, spec, batch, fp16) in enumerate(configs):
+        actual = {"all": cpu.os_count, "auto": cpu.effective}.get(spec) or int(spec)
+        key = (actual, batch, fp16)
+        if key in seen:  # 실효 CPU 가 전체 코어와 같으면 '모든 코어'와 '자동'이 같은 설정
+            entries.append({**seen[key], "name": name, "threads_spec": spec, "note": f"'{seen[key]['name']}' 와 같은 설정이라 다시 안 잼"})
+            continue
+        out = out_dir / f"diag_{i}"
+        args = [ctx.py, "-u", "-m", "tools.bench.capacity", "--detector", ctx.detector, "--photos", str(dirs["phone"]),
+                "--models-dir", str(ctx.models), "--out", str(out), "--workers", "1", "--webcam", "off",
+                "--batch", "on" if batch else "off", "--fp16", "on" if fp16 else "off",
+                "--worker-threads", str(0 if spec == "auto" else actual), *scale]
+        rc = sh(ctx, args, f"06a_diag_{i}.log", timeout=1800)
+        row = None
+        if out.with_suffix(".csv").exists():
+            rows = list(csv.DictReader(out.with_suffix(".csv").read_text(encoding="utf-8-sig").splitlines()))
+            row = next((r for r in rows if r.get("ok") != "skipped" and r.get("fps_min") not in ("", None)), None)
+        note = "" if row else f"측정 실패(코드 {rc}): {tail(ctx, f'06a_diag_{i}.log', 3)[:150]}"
+        entry = _diag_entry(name, spec, batch, fp16, row, note)
+        entries.append(entry)
+        seen[key] = entry
+    chosen = choose_setting(entries)
+    ctx.diag = {"name": chosen["name"], "threads_spec": chosen["threads_spec"], "batch": chosen["batch"], "fp16": chosen["fp16"],
+                "thread_cap": int(chosen["threads_spec"]) if chosen["threads_spec"].isdigit() else 0}
+    (ctx.results / "diag.md").write_text(render_diag(entries, chosen, cpu.describe()), encoding="utf-8")
+    info = {"os": cpu.os_count, "affinity": cpu.affinity, "cgroup": cpu.cgroup_raw, "effective": cpu.effective}
+    (ctx.results / "diag.json").write_text(json.dumps({"cpu": info, "entries": entries, "chosen": ctx.diag}, ensure_ascii=False, indent=1),
+                                           encoding="utf-8")
+    return (f"{cpu.describe()}. 고른 설정: {chosen['name']} (배치 {'on' if chosen['batch'] else 'off'}, "
+            f"fp16 {'on' if chosen['fp16'] else 'off'}, fps {chosen['fps']})")
+
+
+# --- ⑥ 용량 측정 ---
+def load_diag(ctx: Ctx) -> dict | None:
+    if ctx.diag:
+        return ctx.diag
+    path = ctx.results / "diag.json"
+    if path.exists():
+        try:
+            return json.loads(path.read_text(encoding="utf-8"))["chosen"]
+        except (ValueError, KeyError):
+            return None
+    return None
+
+
+def capacity_args(ctx: Ctx, out: Path, choice: dict | None) -> list[str]:
+    """⑥ 용량의 capacity 인자. 진단이 고른 설정(스레드 상한·배치·fp16)을 쓰고, 없으면 기본값."""
+    dirs = photo_dirs(ctx)
+    choice = choice or {"batch": True, "fp16": ctx.gpu, "thread_cap": 0}
+    args = [ctx.py, "-u", "-m", "tools.bench.capacity", "--detector", ctx.detector, "--photos", str(dirs["phone"]),
+            "--models-dir", str(ctx.models), "--out", str(out), "--thread-cap", str(choice.get("thread_cap", 0))]
     if "webcam" in dirs:
         args += ["--webcam-photos", str(dirs["webcam"])]
-    if ctx.quick:
-        if ctx.gpu:
-            args += ["--workers", "2", "--batch", "on", "--fp16", "on", "--webcam", "server", "--examinees", "10,20", "--duration", "15"]
-        else:  # CPU 는 느려서 아주 작게(스크립트가 끝까지 도는지만 본다)
-            args += ["--workers", "1", "--batch", "on", "--fp16", "off", "--webcam", "server", "--examinees", "1",
-                     "--duration", "6", "--warmup", "2"]
-    rc = sh(ctx, args, "06_capacity.log", timeout=4 * 3600)
+    if not ctx.gpu:  # CPU 는 느려서 아주 작게(스크립트가 끝까지 도는지만 본다)
+        return args + ["--workers", "1", "--batch", "on", "--fp16", "off", "--webcam", "server", "--examinees", "1",
+                       "--duration", "6", "--warmup", "2"]
+    batch, fp16 = ("on" if choice["batch"] else "off"), ("on" if choice["fp16"] else "off")
+    if ctx.quick:  # 핵심 질문: 고른 설정에서 workers x 웹캠 x 인원. 미달하면 더 큰 인원은 건너뜀. 목표 10~15분
+        return args + ["--workers", "1,2,4", "--batch", batch, "--fp16", fp16, "--webcam", "server,off",
+                       "--examinees", "10,20,30,40", "--duration", "12", "--warmup", "4"]
+    return args + ["--workers", "1,2,4,8", "--batch", "off,on", "--fp16", "off,on", "--webcam", "server,off",
+                   "--examinees", "10,20,30,40"]
+
+
+def step_capacity(ctx: Ctx) -> str:
+    require_ready(ctx)
+    out = ctx.results / f"capacity_{ctx.gpu_name}"
+    choice = load_diag(ctx)
+    rc = sh(ctx, capacity_args(ctx, out, choice), "06_capacity.log", timeout=4 * 3600)
     if rc != 0 or not out.with_suffix(".md").exists():
         raise RuntimeError(f"capacity 실패(코드 {rc}): {tail(ctx, '06_capacity.log')}")
     md = out.with_suffix(".md").read_text(encoding="utf-8").splitlines()
@@ -388,14 +520,15 @@ def step_capacity(ctx: Ctx) -> str:
         raise RuntimeError(f"조합 실패 {len(failed)}건: {failed[0][:200]}. 로그: logs/06_capacity.log")
     rows: list[str] = []
     for i, ln in enumerate(md):
-        if ln.startswith("| workers | 배치 | fp16 | 웹캠 | 최대 인원"):  # 맨 위 요약 표
+        if ln.startswith("| workers | 스레드/워커 | 배치 | fp16 | 웹캠 | 최대 인원"):  # 맨 위 요약 표
             for row in md[i + 2 :]:
                 if not row.startswith("|"):
                     break
                 cells = [c.strip() for c in row.strip("|").split("|")]
-                rows.append(f"w{cells[0]}/배치{cells[1]}/fp16 {cells[2]}/웹캠 {cells[3]}={cells[4]}")
+                rows.append(f"w{cells[0]}/스레드{cells[1]}/배치{cells[2]}/fp16 {cells[3]}/웹캠 {cells[4]}={cells[5]}")
             break
-    return f"{out.name}.md/.csv. 최대 인원: {', '.join(rows[:6])}"
+    used = f"진단이 고른 설정({choice['name']}) 사용" if choice else "진단 결과 없음: 기본 설정"
+    return f"{out.name}.md/.csv. {used}. 최대 인원: {', '.join(rows[:8])}"
 
 
 # --- ⑦ 정확도 평가 ---
@@ -496,13 +629,40 @@ def jpeg_under(path: Path, limit: int = 380 * 1024, edge: int = 960) -> bytes:
 
 
 # --- ⑧ 방 스캔 API ---
+def _scan_source(ctx: Ctx, dirs: dict[str, Path]) -> tuple[str, list[Path]]:
+    """scan/ 폴더 > 공개 사진 extra/coco(최대 17장) > 합성 사진 순."""
+    if "scan" in dirs:
+        return "scan 폴더의 실제 사진", images_in(dirs["scan"])[:24]
+    for r in PHOTO_ROOTS:
+        base = Path(r) if Path(r).is_absolute() else ctx.root / r
+        found = images_in(base / "extra" / "coco")
+        if found:
+            return "공개 사진(extra/coco)", found[:17]
+    return "합성 사진(의미 없음)", images_in(synthetic_photos(ctx, 3))[:24]
+
+
+def persons_agreement(labels: Path | None, files: list[Path], items: list[dict]) -> dict:
+    """정답(persons 열)이 있는 사진에 대해 서버가 센 사람 수와 맞는 비율."""
+    import csv
+
+    if labels is None:
+        return {"labeled": 0, "match": 0, "detail": []}
+    with labels.open(newline="", encoding="utf-8-sig") as f:
+        truth = {Path(r["file"].strip()).name: _f(r.get("persons")) for r in csv.DictReader(f)}
+    detail = []
+    for path, item in zip(files, items, strict=False):
+        want = truth.get(path.name)
+        if want is not None:
+            detail.append({"file": path.name, "truth": int(want), "found": item["persons"]})
+    return {"labeled": len(detail), "match": sum(1 for d in detail if d["truth"] == d["found"]), "detail": detail}
+
+
 def step_scan(ctx: Ctx) -> str:
     require_ready(ctx)
     import httpx
 
     dirs = photo_dirs(ctx)
-    folder = dirs.get("scan") or synthetic_photos(ctx, 3)
-    files = images_in(folder)[:24]
+    source, files = _scan_source(ctx, dirs)
     names = SCAN_NAMES[: len(files)]  # 파일 이름이 방 스캔 이름이 아니므로 순서대로 h00, h01 ... 을 붙인다
     payload = [("images", (n, jpeg_under(p), "image/jpeg")) for n, p in zip(names, files, strict=True)]
     with Server(ctx, "scan") as srv:
@@ -514,15 +674,19 @@ def step_scan(ctx: Ctx) -> str:
             calls.append((r.status_code, round((time.perf_counter() - t0) * 1000), r.json()))
         bad = httpx.post(f"{srv.url}/v1/scan", headers=headers, files=[("images", ("zzz", b"\xff\xd8\xff", "image/jpeg"))], timeout=30)
     status, wall_ms, body = calls[-1]
-    (ctx.results / "scan.json").write_text(json.dumps({"photos": len(files), "calls_ms": [c[1] for c in calls],
-                                                       "response": body}, ensure_ascii=False, indent=1), encoding="utf-8")
+    empty = {"labeled": 0, "match": 0, "detail": []}
+    agree = persons_agreement(find_labels(ctx), files, body.get("items", [])) if status == 200 else empty
+    (ctx.results / "scan.json").write_text(json.dumps({"photos": len(files), "source": source, "calls_ms": [c[1] for c in calls],
+                                                       "persons_agreement": agree, "response": body}, ensure_ascii=False, indent=1),
+                                           encoding="utf-8")
     if status != 200 or calls[0][0] != 200:
         raise RuntimeError(f"/v1/scan 상태 {status}: {str(body)[:200]}")
     if bad.status_code != 400 or bad.json().get("code") != "BAD_SCAN":
         raise RuntimeError(f"잘못된 요청이 BAD_SCAN 이 아님: {bad.status_code} {bad.text[:100]}")
     reasons = [f"{r['code']}{r['names']}" for r in body["verdict"]["reasons"]]
-    return (f"사진 {len(files)}장, verdict {body['verdict']['status']} {reasons}, 서버 {body['ms']}ms(왕복 {wall_ms}ms), "
-            f"{'실제 사진' if 'scan' in dirs else '합성 사진'}, 잘못된 요청 400 BAD_SCAN 확인")
+    match = f", 사람 수 일치 {agree['match']}/{agree['labeled']}" if agree["labeled"] else ""
+    return (f"사진 {len(files)}장({source}), verdict {body['verdict']['status']} {reasons}, 서버 {body['ms']}ms(왕복 {wall_ms}ms)"
+            f"{match}, 잘못된 요청 400 BAD_SCAN 확인")
 
 
 # --- ⑨ 스트림·콜백 ---
