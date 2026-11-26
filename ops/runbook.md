@@ -37,3 +37,15 @@
 - 웹캠 채널은 `replay.py --channel webcam` 으로 흘린다(얼굴이 나온 사진이 있어야 보정이 끝나고 이벤트가 난다).
 - 확인할 것: `/readyz` `modelsLoaded`, sink 에 서명 검증된 `HANDS_OUT`·`HAND_OUT_ONE`·`TABLET`·`NOTE`·`SMARTWATCH`, `/metrics` 의 `pair_vision_shadow_events_total{type="MANY_HANDS"}`(그림자).
 - 롤백: 서버 모델 문제는 백엔드 스위치를 끄는 것으로 되돌린다(설계 §14-3). 서버가 죽어도 시험은 계속되고 감독 중단으로 기록된다.
+
+## 6. 팀원용: RunPod 에 실제 모델 올려 보기 (GPU 는 아직 한 번도 안 돌려 봤다)
+1. **이미지 만들기**(이 PC 에서 CPU 로 빌드·실행은 확인됨, 19.6GB): 저장소 `main` 에서
+   `docker build --build-arg UV_EXTRAS="--extra real" -t <레지스트리>/pair-vision:real .`
+   Linux 용 PyPI torch 에 CUDA 라이브러리가 들어 있어서 기본 베이스(`python:3.12-slim`)로도 GPU 가 잡힐 것으로 본다(**미검증**). 안 잡히면 `--build-arg BASE_IMAGE=<CUDA 런타임+Python 3.12 이미지>` 를 준다.
+2. **레지스트리에 올리기**: `docker push <레지스트리>/pair-vision:real` (용량이 커서 회선이 느리면 빌드·푸시를 빠른 네트워크 머신이나 CI 에서 한다).
+3. **가중치 준비**: RunPod 네트워크 볼륨(또는 Pod 볼륨)에 `models/` 와 같은 구조로 5개를 둔다: `dfine-small-coco/` `owlv2-base-patch16-ensemble/` `hand_landmarker.task` `face_landmarker.task` `pose_landmarker_lite.task` (sha256 은 `configs/models.lock`, 시작할 때 자동 검증; 파일은 git 에 없으니 이 PC 의 `models/` 를 복사해 간다).
+4. **Pod 만들기**(RunPod 화면 항목 이름은 확인 필요): 위 이미지, GPU 1장(측정은 RTX 4000 Ada 20GB), 볼륨을 `/models` 에 마운트, HTTP 포트 8000 공개, 환경 변수:
+   `VISION_DETECTOR=real` `VISION_MODELS_DIR=/models` `VISION_API_KEY=<비밀>` `VISION_CALLBACK_URL=<백엔드 /internal/vision/events>` `VISION_CALLBACK_SECRET=<비밀>` (`VISION_CALLBACK_KEY_ID` 기본 k1). 비밀은 RunPod 시크릿으로.
+5. **확인**: 모델 적재에 수십 초. `GET /healthz`(인증 없음) → 200, `GET /readyz`(Bearer `VISION_API_KEY`) → `modelsLoaded:true` **`gpu:true`**. `gpu:false` 면 GPU 가 안 잡힌 것(로그 확인, 위 1번 베이스 이미지 대안).
+6. **재생 시험**(백엔드 없이): 이 PC 에서 `tools/replay/replay.py --url https://<pod 주소> --api-key <키> --photos <사진 폴더> --photo-names 1.png --duration 30` 를 돌려 `/metrics` 의 `pair_vision_frame_latency_seconds`(OWLv2 가 있는 프레임 포함)와 이벤트 수를 본다. 콜백은 백엔드 대신 `tools/replay/sink.py` 주소로 받아 서명 검증을 확인할 수 있다.
+7. **하지 않는 것**: 백엔드 스위치는 켜지 않는다(로컬 시험 → 배포 테스트 → 롤백 순서, 설계 §14). 사진·키·콜백 비밀을 로그나 채팅에 남기지 않는다.
