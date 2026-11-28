@@ -33,9 +33,11 @@ class ObjectRule:
 
 # 설계 문서에 값이 없어 보수적으로 둔 시작값(실측 전 임시). 근거는 README "가정한 값".
 DEFAULT_OBJECT_RULES: dict[str, ObjectRule] = {
-    "tablet": ObjectRule(min_ms=10000, gap_ms=10000, cooldown_ms=30000),
+    # OWLv2 10초 주기(2026-11-27, GPU 1장 20명 목표): 끊김 허용은 주기의 2배, 연속 시간은 예전과 같은 표본 수
+    # (태블릿 3번: 0·10·20초, 스마트워치 4번: 0·10·20·30초)가 되도록 늘렸다.
+    "tablet": ObjectRule(min_ms=20000, gap_ms=20000, cooldown_ms=30000),
     "note": ObjectRule(min_ms=10000, gap_ms=7000, cooldown_ms=30000),  # D-FINE 주기(3초)의 2배 이상
-    "smartwatch": ObjectRule(min_ms=15000, gap_ms=10000, cooldown_ms=60000),
+    "smartwatch": ObjectRule(min_ms=30000, gap_ms=20000, cooldown_ms=60000),
     "many_hands": ObjectRule(min_ms=5000, gap_ms=3000, cooldown_ms=30000, shadow=True),
 }
 
@@ -93,7 +95,7 @@ class ModelRules:
     tablet_threshold: float = 0.5
     smartwatch_threshold: float = 0.5
     phone_threshold: float = 0.5
-    owl_interval_ms: int = 5000
+    owl_interval_ms: int = 10000
     # D-FINE(키보드·마우스·노트): 세션마다 이 주기로만 돌리고 사이에는 직전 결과를 재사용한다(0 = 매 프레임). 책상 위 물체는 거의 안 움직이고 GPU 시간의 가장 큰 몫이다.
     dfine_interval_ms: int = 3000
     hand_threshold: float = 0.5
@@ -104,6 +106,10 @@ class ModelRules:
     face_threshold: float = 0.5  # RTMW: 얼굴 점 68개의 평균 점수가 이 값 이상이면 얼굴로 센다
     yaw_scale: float = 0.55  # RTMW 6점 모델의 yaw 는 실제보다 2배쯤 크게 나오고 흔들려 줄인다(본인 사진 10장 기준, 다른 사람으로 재확인 필요)
     pitch_scale: float = 1.0
+    # 묶음 추론 엔진(VISION_BATCH=1)·단일 경로 공통. 검출 수치에 작게나마 영향이 있어 규칙 파일(rulesVersion)로 추적한다.
+    fp16: bool = True  # D-FINE·OWLv2 반정밀도. GPU 일 때만 쓰고 CPU 에서는 항상 fp32
+    fast_preprocess: bool = True  # D-FINE·OWLv2 이미지 전처리를 torch(가능하면 GPU)로. false 면 transformers 기본 전처리(OWLv2 CPU 약 120ms/장)
+    person_box_interval_ms: int = 3000  # 웹캠 사람 상자(YOLOX)를 세션마다 이 주기로만 찾고 사이에는 직전 상자 재사용(0 = 매 프레임)
     pose_every: int = 3  # 웹캠: 얼굴은 매 프레임, 포즈(어깨)는 N 프레임마다(사이에는 직전 값 재사용, CPU 절약. 프론트는 4)
 
 
@@ -229,6 +235,12 @@ def _parse_models(raw: Mapping) -> ModelRules:
     backend = raw.get("vision_backend", d.vision_backend)
     if backend not in ("rtmw", "mediapipe"):
         raise ValueError(f"규칙 설정 models.vision_backend 는 rtmw 또는 mediapipe 여야 합니다: {backend!r}")
+    flags = {}
+    for key in ("fp16", "fast_preprocess"):
+        value = raw.get(key, getattr(d, key))
+        if not isinstance(value, bool):
+            raise ValueError(f"규칙 설정 models.{key} 는 true 또는 false 여야 합니다: {value!r}")
+        flags[key] = value
     extra = {key: _score("models", key, raw.get(key, getattr(d, key))) for key in ("face_threshold", "yaw_scale", "pitch_scale")}
     return ModelRules(
         **scores,
@@ -239,6 +251,10 @@ def _parse_models(raw: Mapping) -> ModelRules:
         dfine_interval_ms=_positive("models", "dfine_interval_ms", raw.get("dfine_interval_ms", d.dfine_interval_ms)),
         max_hands=max_hands,
         hand_merge_distance=float(merge),
+        person_box_interval_ms=_positive(
+            "models", "person_box_interval_ms", raw.get("person_box_interval_ms", d.person_box_interval_ms)
+        ),
+        **flags,
     )
 
 

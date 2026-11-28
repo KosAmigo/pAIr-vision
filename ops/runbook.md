@@ -77,3 +77,11 @@ RunPod PyTorch 템플릿 Pod 의 JupyterLab 에 총괄 노트북을 복사해 �
 - 코드·가상환경·모델은 `/workspace` 가 아니라 홈 아래 `~/pair-vision-work` 에 둔다(`/workspace` 권한 문제 회피). 서버 키 같은 작은 설정 파일만 `/workspace/.pair-vision/env.json` 에 저장한다. Pod 를 새로 만들면 압축 해제와 파이썬 패키지 설치를 다시 한다.
 - 새 버전을 배포하려면 zip 과 노트북을 다시 만들어 교체한다(zip 의 크기·sha256 이 노트북에 박혀 있어 둘은 짝이다).
 - RunPod PyTorch 템플릿의 torch 가 2.6 미만이면 `bootstrap.sh` 가 가상환경에 torch 2.6(CUDA 맞춤)을 추가로 설치한다.
+
+### 6-5. GPU 1장 합격 시험 노트북 (2026-11-27, `docs/intent/realtime-vision-20.md`)
+- 산출물(저장소 밖): `C:\dev\pAIr\dist\vision-gpu-test\pair-vision-gpu-test.zip`(서버 코드 + 모델) 과 `pair_vision_gpu_test.ipynb`(zip 의 크기·sha256 이 박혀 있어 둘은 짝). 다시 만들기: `python tools/gpu_test/make_bundle.py --out C:/dev/pAIr/dist/vision-gpu-test`.
+- 사용자: zip 을 구글 드라이브에 올려 '링크가 있는 모든 사용자'로 공유 → RunPod PyTorch 템플릿 Pod(GPU 1장, 컨테이너 디스크 30GB 이상) → JupyterLab 에 노트북 올림 → 1번 칸 `DRIVE_URL` 에 링크 → **Run All**(약 35~45분).
+- 노트북 순서: zip 받기·크기/sha256 → 풀린 파일 sha256 → `bootstrap.sh` → **예비 점검**(`tools/gpu_test/preflight.py`: CUDA·ONNX Runtime GPU, fp16 vs fp32 최종 검출 비교 - 다른 모델은 자동 fp32, 단계별 묶음 속도 곡선) → 서버(`VISION_BATCH=1`, 모델 sha256 대조) + 수신기(`sink.py`, 서명 검증) → 2명 1분 짧은 부하(콜백·지표 정상인지) → **20명 x 2채널 x 초당 1장 x 20분**(`tools/gpu_test/load_test.py`, 앞 1분 제외) → 합격 기준 3개 자동 판정 + 근거 표 → 서버 종료.
+- 실패하면 그 칸이 원인·조치를 빨간 글씨로 내고 멈춘다(GPU 없음, 디스크 부족, 링크·해시 불일치, 설치 실패, CUDA 미인식, gpu:false, 콜백 실패 등). 응시자 0 의 휴대폰은 손 없는 책상 사진(probe)을 보내 손 이탈 → 서명 콜백이 반드시 생긴다(인원·부하는 같음).
+- 합성 사진만 쓴다(실사진·키·비밀 없음). 키·서명 비밀은 실행마다 새로 만들고 출력하지 않는다.
+- **결과(2026-11-27, RTX A4500 20GB): 합격** - 버린 사진 0%, 지연 p95 0.10초, 끊김 초과 0%/0%, 정합성 모두 통과, GPU 사용률 평균 17%. 세부·묶음 속도 곡선은 README "GPU 합격 시험 실측". 운영 전 남은 확인: RunPod 프록시 경유 WebSocket, 실제 백엔드 연결, 실제 사진.

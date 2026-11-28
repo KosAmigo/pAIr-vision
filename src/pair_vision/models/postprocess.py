@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+import threading
 from collections.abc import Iterable, Sequence
 
 from pair_vision.models.base import Box, HandDet, ObjectDet
@@ -40,18 +41,24 @@ class Cadence:
 
 
 class StageTimer:
-    """단계별 (호출 수, 누적 초). 어느 단계가 시간을 먹는지 /metrics 와 용량 측정 표로 보려고 쓴다."""
+    """단계별 (호출 수, 누적 초). 어느 단계가 시간을 먹는지 /metrics 와 용량 측정 표로 보려고 쓴다.
+
+    묶음 추론에서는 한 번 실행에 프레임 n 장을 세므로(calls += n) 누적 초 / 호출 수 = 프레임당 평균 시간이다.
+    여러 스레드(엔진·전처리 풀)에서 부르므로 잠근다."""
 
     def __init__(self) -> None:
         self._data: dict[str, list[float]] = {}
+        self._lock = threading.Lock()
 
-    def add(self, stage: str, seconds: float) -> None:
-        item = self._data.setdefault(stage, [0.0, 0.0])
-        item[0] += 1
-        item[1] += seconds
+    def add(self, stage: str, seconds: float, count: int = 1) -> None:
+        with self._lock:
+            item = self._data.setdefault(stage, [0.0, 0.0])
+            item[0] += count
+            item[1] += seconds
 
     def snapshot(self) -> dict[str, tuple[float, float]]:
-        return {k: (v[0], v[1]) for k, v in self._data.items()}
+        with self._lock:
+            return {k: (v[0], v[1]) for k, v in self._data.items()}
 
 
 def box_in_image(box: Sequence[float], width: int, height: int) -> Box:

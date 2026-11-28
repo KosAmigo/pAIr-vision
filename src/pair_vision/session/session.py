@@ -48,6 +48,7 @@ class Session:
         self._calib_start_ms: int | None = None
         self.calibration = "pending"
         self.last_analyzed_ms = 0
+        self.last_processed_recv: dict[str, int] = {}  # 채널별 마지막으로 분석된 프레임의 recvMs(간격 지표용)
         self._keyboard: Box | None = None  # 정지 물체 박스 캐시(설계 §7-3)
         self._mouse: Box | None = None
         self._tick_ref: tuple[int, float] | None = None

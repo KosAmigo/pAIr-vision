@@ -91,6 +91,11 @@ $env:VISION_RULES_PATH = "configs/rules.local-cpu.yaml"    # CPU 전용(아래 �
 | `VISION_MODELS_DIR` / `VISION_MODELS_LOCK` | `./models` / `configs/models.lock` | 모델 폴더(git 제외)와 검증용 lock |
 | `VISION_VERIFY_MODELS` | `1` | 시작할 때 모델 파일 sha256 을 lock 과 대조(`0` 이면 건너뜀) |
 | `VISION_WORKERS` / `VISION_WORKER_THREADS` | `1` / `0` | 모델 프로세스(워커) 수와 워커당 CPU 코어·스레드 수(0=사용 가능 코어/워커 수). 2 이상이면 응시자별로 워커를 고정 배정해 병렬 처리한다. **실측(RTX A5000 Pod): 워커 1개일 때 초당 약 5장에서 막혀 응시자 2명까지만 처리됐다(GPU 3~17%, CPU load 높음).** 워커 병렬화 효과는 Pod 에서 다시 재야 한다 |
+| `VISION_BATCH` | `0` (`tools/runpod/start.sh` 는 `1`) | `1` 이면 **묶음 추론**: 모델을 한 프로세스에 두고 응시자 사이 프레임을 단계별로 묶어 돌린다(아래 절). `VISION_WORKERS` 는 무시 |
+| `VISION_BATCH_MAX` / `VISION_BATCH_WAIT_MS` / `VISION_OWL_MAX_BATCH` | `16` / `15` / `4` | 단계당 최대 묶음, GPU 가 놀 때 첫 프레임 뒤 더 모으는 시간, OWLv2(960px) 묶음 상한 |
+| `VISION_PREP_THREADS` | `4` | JPEG 풀기·CPU 전처리 스레드 |
+| `VISION_DEVICE_PREPROCESS` | 비움(자동) | 전부 GPU 전처리(JPEG nvJPEG 풀기·RTMW 자르기·YOLOX 레터박스). 비우면 GPU + `models.fast_preprocess` 일 때 켜짐, `1`/`0` 으로 강제 |
+| `VISION_FP16_SKIP` | 없음 | `models.fp16: true` 여도 fp32 로 둘 모델(`dfine`, `owlv2`). GPU 점검에서 결과가 다를 때 |
 | `VISION_HOST` `VISION_PORT` `VISION_LOG_LEVEL` | `0.0.0.0` `8000` `INFO` | |
 
 비밀은 환경 변수/RunPod 시크릿으로만 넣는다. `docker-compose.yml` 의 `dev-key` 는 로컬 개발 전용이다.
@@ -107,9 +112,9 @@ $env:VISION_RULES_PATH = "configs/rules.local-cpu.yaml"    # CPU 전용(아래 �
 
 | 항목 | 값 | 이유 |
 |---|---|---|
-| `TABLET` | 10초 연속, 끊김 허용 10초, 쿨다운 30초 | OWLv2 5초 주기 샘플 3번 이상. 끊김 허용은 주기의 2배 이상이어야 한다(설정 검사) |
+| `TABLET` | 20초 연속, 끊김 허용 20초, 쿨다운 30초 | OWLv2 10초 주기(2026-11-27) 샘플 3번 이상(0·10·20초). 끊김 허용은 주기의 2배 이상이어야 한다(설정 검사) |
 | `NOTE` (COCO `book`) | 10초 연속, 끊김 허용 3초, 쿨다운 30초 | 프레임마다 검출 |
-| `SMARTWATCH` | 15초 연속, 끊김 허용 10초, 쿨다운 60초 | 손목시계를 찬 응시자에게 자주 걸릴 수 있어 더 길게 |
+| `SMARTWATCH` | 30초 연속, 끊김 허용 20초, 쿨다운 60초 | 손목시계를 찬 응시자에게 자주 걸릴 수 있어 더 길게(10초 주기 샘플 4번, 예전 5초 주기 15초와 같은 표본 수) |
 | `MANY_HANDS`(손 3개 이상) | 5초 연속, 그림자 모드 | 계약에 유형이 없어 콜백 안 보냄 |
 | 검출 기준값 | 키보드 0.3 · 마우스 0.4 · 노트 0.3 · 태블릿/스마트워치/휴대폰 0.5 · 손 0.5 | 문서 값(마우스 0.4, OWLv2 0.5, 손 0.5), 나머지는 측정 때 쓴 값 |
 | 손 중복 합침 거리 | 프레임 비율 0.06 | 임시. 8장 사진에서는 중복이 없었다 |
@@ -159,3 +164,32 @@ $env:VISION_RULES_PATH = "configs/rules.local-cpu.yaml"    # CPU 전용(아래 �
 - **D-FINE 주기화(`models.dfine_interval_ms: 3000`):** 책상 위 키보드·마우스·노트는 거의 안 움직여서(설계 §7-3 "정지 박스 캐시") 세션마다 3초에 한 번만 돌리고 사이에는 직전 결과를 재사용한다. 노트 이벤트의 끊김 허용을 3초에서 7초로 늘렸다(D-FINE 주기의 2배 이상, 설정 검사). 0 이면 예전처럼 매 프레임.
 - **단계별 시간 측정:** `/metrics` 에 `pair_vision_stage_seconds_total{stage}`·`..._calls_total{stage}`(decode·dfine·hands·owlv2·webcam). 노트북 용량 측정이 단계마다 평균 ms 와 "초당 점유초"를 표로 낸다. 점유 합이 워커 수에 가까우면 모델 계산이 병목이다.
 - 아직 안 한 것(필요하면 이 순서): D-FINE·OWLv2 반정밀도(fp16), 세션을 묶은 GPU 배치 추론, OWLv2 주기 늘리기, 전송 간격 줄이기, 서버 2대.
+
+### 묶음 추론·fp16·OWLv2 10초 (2026-11-27, GPU 1장 20명 목표 - `docs/intent/realtime-vision-20.md`)
+- **왜:** 용량 시뮬레이션에서 워커 풀 구조는 GPU 1장 약 8명이었다. 병목은 GPU 모델 시간(모델 밖 서버는 100명도 폐기 0).
+- **묶음 추론(`VISION_BATCH=1`, `models/batch.py`·`batch_real.py`):** 모델을 한 프로세스에 두고, 프레임마다 단계 목록(휴대폰: [D-FINE] → RTMW 손 → [OWLv2], 웹캠: [YOLOX 사람 상자] → RTMW)을 정한 뒤 **엔진 스레드 1개**가 "가장 오래 기다린 작업이 있는 단계"의 대기 작업을 최대 16장(OWLv2 4장) 한 번에 돌린다. 휴대폰 손과 웹캠 얼굴·몸은 같은 RTMW 묶음에 섞인다(RTMW ONNX 는 배치 축이 있고 2의 거듭제곱으로 채워 입력 모양을 고정). YOLOX ONNX 는 배치 1 고정이라 한 장씩.
+- **"묶음이 다 끝나야 다음 묶음" 구조를 없앴다(`pipeline/worker.py` 연속 처리):** 칸(응시자·채널)마다 처리 중 1장만 두고, 프레임이 끝나는 즉시 그 칸의 다음 프레임을 넘긴다. 빠른 웹캠 프레임이 느린 OWLv2 묶음을 기다리지 않는다. 큐 길이 1·seq·규칙 엔진·콜백 계약은 그대로.
+- **fp16(`models.fp16`, GPU 일 때만):** OWLv2 는 가중치까지 fp16, **D-FINE 은 혼합 정밀도(autocast)**. D-FINE 을 통째로 `.half()` 하면 이 PC 측정에서 책상 사진 3장의 키보드·마우스·노트가 전부 사라졌다(값 넘침으로 보임). autocast 는 fp32 와 검출이 같았다(점수 차 0.005). fp16 출력에 NaN/inf 가 나오면 그 프레임을 오류로 버린다. 모델별로 끄려면 `VISION_FP16_SKIP`.
+- **전처리 전부 GPU(`VISION_DEVICE_PREPROCESS`, GPU 면 자동):** CPU 는 단계(주기) 판단만 하고, JPEG 풀기(torchvision nvJPEG, 묶음 한 번 - torchvision 이 없으면 PIL 로 풀어 올림)·D-FINE/OWLv2 전처리·RTMW 자르기(rtmlib 아핀 행렬 그대로 grid_sample)·YOLOX 레터박스를 엔진 스레드에서 GPU 로 한다. rtmlib·PIL 과 수치 비교 시험, CPU 강제 실행에서 기존 경로와 검출 결과 같음. 모델 입출력(ONNX Runtime)은 호스트 numpy 를 거치고(작은 복사), RTMW 점 위치 계산·규칙 판정은 CPU(µs 단위). 시뮬레이션상 GPU 가 병목이라 용량은 약 1명 줄어든다(26 -> 25명 추정).
+- **빠른 전처리(`models.fast_preprocess`):** D-FINE·OWLv2 전처리를 torch 로(GPU 면 GPU 에서). OWLv2 기준 전처리(scipy) 이 PC CPU 132ms → torch 1스레드 26ms, D-FINE 12ms → 5ms. 기준 처리기와 수치 비교 시험(`tests/test_fast_preprocess.py`, 평균 차 < 0.005).
+- **OWLv2 10초 주기 + 태블릿·스마트워치 규칙값**(위 "가정한 값"), **웹캠 사람 상자 재사용**(`models.person_box_interval_ms: 3000`, 사이에는 직전 상자로 RTMW. 새 사람은 최대 3초 늦게 잡힌다). 규칙 `version` 2026-11-27.1.
+- **지표:** `pair_vision_batch_size{stage}`(묶음 크기), `pair_vision_stage_seconds_total`·`..._calls_total`(묶음에서는 호출 수 = 프레임 수라 초/호출 = 프레임당 평균), `pair_vision_processed_gap_seconds{channel}`(같은 칸에서 분석된 프레임 사이 간격 - 끊김 허용 초과 비율), `pair_vision_inflight_frames`, 지연 버킷에 3초 추가.
+- **시뮬레이션(추정, `tools/capacity_sim/capacity_sim.py` ⑦):** 구현한 구조로 GPU 1장 약 25명(합격 기준: 폐기 1%·p95 3초·끊김 1%), 20명에서 폐기 0%·p95 0.75초·GPU 점유 99%. 묶음 이득이 없거나(f8=1.0) RTMW 가 40ms 이상이면 20명 불합격 - **GPU 실측이 필요하다**: `tools/gpu_test/`(합격 시험 노트북, runbook §6-5).
+- **검증:** 가짜 모델·실제 모델(CPU) 둘 다 묶음 결과가 한 장씩 결과와 같음(`tests/test_batch_real.py`), 실제 모델 묶음 서버 + 부하 3명(CPU, 콜백 서명 검증)까지. GPU 실측은 아래 절.
+
+### GPU 합격 시험 실측 (2026-11-27, RunPod RTX A4500 20GB · CPU 48코어 - 합격)
+`tools/gpu_test/` 노트북(runbook §6-5) 한 번 실행. 조건: 응시자 20명 x 웹캠·휴대폰 x 초당 1장 x 20분(앞 1분 제외), 합성 사진, `VISION_BATCH=1`, 규칙 2026-11-27.1, 부하는 Pod 안 127.0.0.1.
+
+| 합격 기준 | 실측 | 한도 |
+|---|---|---|
+| 버린 사진 | 0 / 47,994장 (0%) | 1% |
+| 경고 지연 p95 | 0.10초 (100% 가 3초 안) | 3초 |
+| 끊김 초과 휴대폰(>3초) / 웹캠(>2.5초) | 0% / 0% (간격 p95 1.37초) | 1% |
+
+- 정합성: `/readyz` gpu=true, 모델 sha256 lock 대조 통과, 모델 오류 0, 콜백 실패 0, 서명 검증 수신기에 이벤트 107건(시작·끝 합쳐 184번 전송) 도착.
+- 정밀도: D-FINE 혼합 정밀도(autocast fp16), OWLv2 fp16. fp32 대비 최대 점수 차 0.005 / 0.002, 짝 없는 검출 0 -> fp32 로 둔 모델 없음. 전처리 전부 GPU(nvJPEG 풀기 포함).
+- 자원: GPU 사용률 평균 17%·최대 63%, GPU 메모리 최대 3.4GB, load1 평균 2.58, CPU 일 프레임당 0.01ms.
+- 프레임당 시간(20명, 평균 묶음 1~2장): D-FINE 33ms(3초 주기) · OWLv2 32ms(10초 주기) · RTMW 4.9ms · YOLOX 9.5ms(3초 주기) · JPEG 풀기 0.6ms. 엔진 점유 합 약 0.55(대부분 GPU 계산 밖의 파이썬·동기화).
+- 묶음 속도 곡선(장당 ms): D-FINE 1장 27 -> 16장 4.4(배수 0.16) · RTMW 1장 4.7 -> 32장 1.3(0.27) · OWLv2 1장 31 -> 4장 24(0.78) · YOLOX 7.7(배치 1 고정, 이득 없음). 시뮬레이션 가정(배수 0.4, RTMW 25ms)보다 대체로 빨라 시뮬레이션의 25명 추정은 보수적이었다.
+- **결론(의도 파일 기준): GPU 1장 20명 실시간 감독 유지, 사후 분석 전환 안 함.**
+- 확인 못 한 것: 20명 초과(실측 없음 - 곡선상 여유는 크지만 묶음마다 드는 파이썬 비용·YOLOX 가 먼저 막을 수 있다. 늘리려면 노트북 `STUDENTS` 만 바꿔 다시 잰다), 실제 사진, RunPod 프록시를 거친 WebSocket 수신, 실제 백엔드 연결.

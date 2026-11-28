@@ -71,7 +71,7 @@ def test_hands_out_event_is_signed_and_sent(env, auth):
     assert body["type"] == "HANDS_OUT" and body["source"] == "PHONE_CAM"
     assert body["sessionKey"] == key and body["final"] is False
     assert body["startedAtMs"] == T0 and body["durationMs"] == 7000
-    assert body["rulesVersion"] == "2026-11-26.3"
+    assert body["rulesVersion"] == "2026-11-27.1"
     assert body["clientId"] == make_client_id(key, "HANDS_OUT", T0)
     assert req.headers["x-vision-key-id"] == "k1"
     ts = req.headers["x-vision-timestamp"]

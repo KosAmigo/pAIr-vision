@@ -11,7 +11,7 @@ from collections.abc import Callable
 from pair_vision.evidence.callback import EventSink
 from pair_vision.evidence.events import SOURCE_BY_TYPE, build_callback_event
 from pair_vision.metrics import Metrics
-from pair_vision.models.base import PHONE, Detector, Frame
+from pair_vision.models.base import PHONE, Detection, Detector, Frame
 from pair_vision.rules.hands import RuleEvent
 from pair_vision.session.frames import FrameError, ParsedFrame, parse_frame
 from pair_vision.session.mailbox import Mailboxes
@@ -21,7 +21,6 @@ log = logging.getLogger("pair_vision.pipeline")
 
 UNKNOWN_SESSION_INTERVAL_S = 10.0
 ERROR_THROTTLE_MAX_KEYS = 10_000
-MAX_BATCH = 16
 
 Reply = Callable[[dict], None]
 
@@ -72,6 +71,8 @@ class Pipeline:
         self._unknown_last: dict[str, float] = {}
         self._bad_last: dict[str, float] = {}
         self._queued_at: dict[tuple[str, str], float] = {}
+        self._inflight: set[tuple[str, str]] = set()  # 연속 처리: 모델에서 처리 중인 칸(칸마다 1장)
+        self._tasks: set[asyncio.Task] = set()
 
     # --- 수신 ---
     def _throttled(self, table: dict[str, float], key: str, now: float) -> bool:
@@ -106,12 +107,65 @@ class Pipeline:
             self._queued_at[(frame.key, frame.channel)] = now
             self._wake.set()
 
+    def drop_key(self, key: str) -> None:
+        """세션 종료: 대기 프레임과 수신 시각 기록을 지운다(처리 중 프레임은 끝나면 세션이 없어 버려진다)."""
+        self.mailboxes.drop_key(key)
+        for slot in [s for s in self._queued_at if s[0] == key]:
+            del self._queued_at[slot]
+
     # --- 처리 ---
     async def run(self) -> None:
+        streaming = getattr(self.detector, "streaming", False)
         while True:
             await self._wake.wait()
             self._wake.clear()
-            await self.process_pending()
+            if streaming:
+                self.dispatch_ready()
+            else:
+                await self.process_pending()
+
+    # --- 연속 처리(묶음 추론 엔진): 프레임마다 따로 끝나고, 끝난 칸에 바로 다음 프레임을 넣는다 ---
+    def dispatch_ready(self) -> int:
+        """처리 중이 아닌 칸의 대기 프레임을 모델에 넘긴다. 칸(응시자·채널)마다 처리 중 1장이라 규칙 순서가 지켜진다."""
+        count = 0
+        for p in self.mailboxes.take_ready(self._inflight):
+            slot = (p.key, p.channel)
+            queued = self._queued_at.pop(slot, time.monotonic())
+            frame = self._to_frame(p)
+            if frame is None:
+                continue
+            self._inflight.add(slot)
+            task = asyncio.create_task(self._infer_one(frame, slot, queued))
+            self._tasks.add(task)
+            task.add_done_callback(self._tasks.discard)
+            count += 1
+        self.metrics.inflight.set(len(self._inflight))
+        return count
+
+    async def _infer_one(self, frame: Frame, slot: tuple[str, str], queued: float) -> None:
+        try:
+            det = await self.detector.infer(frame)  # type: ignore[attr-defined]
+        except Exception as exc:  # noqa: BLE001 - 모델 오류가 서버를 죽이지 않게(그 프레임만 버림)
+            self.metrics.detector_errors.inc()
+            log.warning("모델 실행 오류 (프레임 건너뜀): %r", exc)
+            det = None
+        finally:
+            self._inflight.discard(slot)
+            self.metrics.inflight.set(len(self._inflight))
+            self._wake.set()  # 이 칸에 기다리던 프레임이 있으면 바로 넘긴다
+        if det is not None:
+            try:
+                self._apply(det, queued, time.monotonic())
+            except Exception:  # noqa: BLE001 - 규칙·콜백 오류가 태스크 밖으로 새지 않게
+                log.exception("분석 결과 적용 오류")
+
+    def _to_frame(self, p: ParsedFrame) -> Frame | None:
+        session = self.registry.get(p.key)
+        if session is None:
+            return None
+        if session.origin_ms is None and p.channel == PHONE:
+            session.origin_ms = p.recv_ms
+        return Frame(p.key, p.channel, p.seq, p.recv_ms, p.jpeg, session.origin_ms or p.recv_ms)
 
     async def process_pending(self) -> int:
         frames = self.mailboxes.take_all()
@@ -122,13 +176,14 @@ class Pipeline:
 
     async def _process_batch(self, parsed: list[ParsedFrame]) -> int:
         batch: list[Frame] = []
+        queued: dict[tuple[str, str], float] = {}
         for p in parsed:
-            session = self.registry.get(p.key)
-            if session is None:
+            frame = self._to_frame(p)
+            if frame is None:
                 continue
-            if session.origin_ms is None and p.channel == PHONE:
-                session.origin_ms = p.recv_ms
-            batch.append(Frame(p.key, p.channel, p.seq, p.recv_ms, p.jpeg, session.origin_ms or p.recv_ms))
+            # 수신 시각은 꺼낼 때 가져간다(처리 중에 같은 칸에 새 프레임이 오면 그 시각으로 덮이므로)
+            queued[(p.key, p.channel)] = self._queued_at.pop((p.key, p.channel), time.monotonic())
+            batch.append(frame)
         if not batch:
             return 0
         try:
@@ -139,19 +194,26 @@ class Pipeline:
             return 0
         now = time.monotonic()
         for det in detections:
-            session = self.registry.get(det.key)
-            if session is None:
-                continue
-            out = session.on_detection(det, now)
-            self.processed += 1
-            self.metrics.frames_processed.labels(det.channel).inc()
-            queued = self._queued_at.pop((det.key, det.channel), None)
-            if queued is not None:
-                self.metrics.frame_latency.observe(max(0.0, now - queued))
-            self.emit(det.key, out.events)
-            if out.check is not None:
-                self.hub.publish({"type": "check", "sessionKey": det.key, **out.check})
+            self._apply(det, queued.get((det.key, det.channel)), now)
         return len(detections)
+
+    def _apply(self, det: Detection, queued: float | None, now: float) -> None:
+        """분석 결과 하나를 세션 규칙에 넣고 이벤트·check·지표를 낸다."""
+        session = self.registry.get(det.key)
+        if session is None:
+            return
+        out = session.on_detection(det, now)
+        self.processed += 1
+        self.metrics.frames_processed.labels(det.channel).inc()
+        if queued is not None:
+            self.metrics.frame_latency.observe(max(0.0, now - queued))
+        prev = session.last_processed_recv.get(det.channel)
+        if prev is not None and det.recv_ms > prev:
+            self.metrics.processed_gap.labels(det.channel).observe((det.recv_ms - prev) / 1000)
+        session.last_processed_recv[det.channel] = max(det.recv_ms, prev or 0)
+        self.emit(det.key, out.events)
+        if out.check is not None:
+            self.hub.publish({"type": "check", "sessionKey": det.key, **out.check})
 
     def emit(self, session_key: str, events: list[RuleEvent]) -> None:
         for ev in events:

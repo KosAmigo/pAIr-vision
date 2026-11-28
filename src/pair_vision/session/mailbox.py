@@ -30,6 +30,11 @@ class Mailboxes:
         self._latest.clear()
         return frames
 
+    def take_ready(self, busy: set[tuple[str, str]]) -> list[ParsedFrame]:
+        """처리 중인 칸(busy)을 뺀 나머지 칸의 최신 프레임을 꺼낸다. 바쁜 칸의 프레임은 그대로 기다린다(새 프레임이 오면 교체)."""
+        ready = [slot for slot in self._latest if slot not in busy]
+        return [self._latest.pop(slot) for slot in ready]
+
     def drop_key(self, key: str) -> None:
         for slot in [s for s in self._latest if s[0] == key]:
             del self._latest[slot]

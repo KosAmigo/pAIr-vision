@@ -2,7 +2,7 @@
 # rules.default.yaml 과 달리 OWLv2 주기를 30초로 늘렸다(CPU 에서 OWLv2 한 번 약 3초 -> 5초 주기면 손 규칙 끊김 허용 3초를 넘겨 손 이벤트가 안 난다).
 # 규칙 값 (계약 §9, 모두 임시값 — 실측 M1~M6 뒤 조정). 배포 없이 이 파일만 바꿔 쓴다.
 # 이벤트의 rulesVersion 에는 아래 version 이 그대로 기록된다. 값을 바꾸면 version 도 올린다.
-version: "2026-11-26.3-cpu-local"
+version: "2026-11-27.1-cpu-local"
 
 profiles:
   default:

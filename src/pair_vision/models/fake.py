@@ -152,7 +152,33 @@ def create_detector(
     verify: bool = True,
     workers: int = 1,
     worker_threads: int = 0,
+    batch: bool = False,
+    batch_max: int = 16,
+    batch_wait_ms: float = 15.0,
+    prep_threads: int = 4,
+    owl_max_batch: int = 4,
+    fp16_skip: frozenset[str] = frozenset(),
+    device_preprocess: bool | None = None,
 ) -> Detector:
+    if batch:  # 묶음 추론: 모델 1프로세스 + 응시자 사이 배치(워커 풀 대신)
+        from pair_vision.models.batch import BatchedDetector, FakeBatchBackend
+
+        if workers > 1:
+            import logging
+
+            logging.getLogger("pair_vision.models").warning("VISION_BATCH=1 이면 VISION_WORKERS(%d)는 무시합니다", workers)
+        if kind == "fake":
+            backend = FakeBatchBackend(scenario)
+        elif kind == "real":
+            from pair_vision.models.batch_real import RealBatchBackend
+            from pair_vision.rules.config import ModelRules
+
+            backend = RealBatchBackend(models_dir, model_rules or ModelRules(), lock_path=lock_path, verify=verify,
+                                       owl_max_batch=owl_max_batch, fp16_skip=fp16_skip,
+                                       device_preprocess=device_preprocess)
+        else:
+            raise ValueError(f"지원하지 않는 detector: {kind!r} (fake | real)")
+        return BatchedDetector(backend, max_batch=batch_max, wait_ms=batch_wait_ms, prep_threads=prep_threads)
     if workers > 1:  # 모델을 프로세스 여러 개에 올려 병렬 처리(실측: 한 프로세스는 CPU 에서 초당 약 5장에서 막힘)
         from pair_vision.models.pool import PooledDetector
 
@@ -166,6 +192,6 @@ def create_detector(
         from pair_vision.rules.config import ModelRules
 
         return RealDetector(
-            models_dir, model_rules or ModelRules(), lock_path=lock_path, verify=verify
+            models_dir, model_rules or ModelRules(), lock_path=lock_path, verify=verify, fp16_skip=fp16_skip
         )
     raise ValueError(f"지원하지 않는 detector: {kind!r} (fake | real)")

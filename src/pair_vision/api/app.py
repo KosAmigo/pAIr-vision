@@ -45,8 +45,17 @@ def build_core(
         verify=settings.verify_models,
         workers=settings.workers,
         worker_threads=settings.worker_threads,
+        batch=settings.batch,
+        batch_max=settings.batch_max,
+        batch_wait_ms=settings.batch_wait_ms,
+        prep_threads=settings.prep_threads,
+        owl_max_batch=settings.owl_max_batch,
+        fp16_skip=settings.fp16_skip,
+        device_preprocess=settings.device_preprocess,
     )
     metrics = Metrics()
+    if hasattr(detector, "batch_observer"):  # 묶음 추론: 단계별 묶음 크기를 지표로
+        detector.batch_observer = lambda stage, n: metrics.batch_size.labels(stage).observe(n)
     if sink is None:
         if settings.callback_url:
             client = httpx.AsyncClient(timeout=10.0)

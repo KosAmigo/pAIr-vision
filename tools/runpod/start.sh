@@ -18,5 +18,6 @@ bash "$ROOT/tools/runpod/bootstrap.sh"
 cd "$ROOT"  # 규칙·lock 의 상대 경로(configs/...)가 저장소 기준이다
 export PYTHONPATH="$ROOT/src"
 export VISION_DETECTOR=real
+export VISION_BATCH="${VISION_BATCH:-1}"  # 묶음 추론(모델 1프로세스, 응시자 사이 배치). 예전 워커 풀은 VISION_BATCH=0
 export VISION_MODELS_DIR="${VISION_MODELS_DIR:-$ROOT/models}"
 exec "${VISION_VENV:-$WORK/venv-vision}/bin/python" -m pair_vision

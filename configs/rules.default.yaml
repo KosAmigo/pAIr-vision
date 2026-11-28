@@ -1,6 +1,6 @@
 # 규칙 값 (계약 §9, 모두 임시값 — 실측 M1~M6 뒤 조정). 배포 없이 이 파일만 바꿔 쓴다.
 # 이벤트의 rulesVersion 에는 아래 version 이 그대로 기록된다. 값을 바꾸면 version 도 올린다.
-version: "2026-11-26.3"
+version: "2026-11-27.1"   # .1: OWLv2 10초 주기 + 태블릿·스마트워치 값 조정, fp16·빠른 전처리·사람 상자 재사용
 
 profiles:
   default:
@@ -18,9 +18,10 @@ profiles:
     # 물체 규칙: 연속으로 보이는 시간(min_ms) 이상이면 이벤트. 설계 문서에 값이 없어 보수적으로 둔 임시값(보고서·README 참조).
     # tablet·smartwatch 는 OWLv2 가 몇 초 주기로만 보므로 gap_ms 는 models.owl_interval_ms 의 2배 이상이어야 한다.
     objects:
-      tablet:     { min_ms: 10000, gap_ms: 10000, cooldown_ms: 30000 }
+      # OWLv2 10초 주기(2026-11-27): gap 은 주기의 2배(20초), min 은 예전과 같은 표본 수(태블릿 3번·스마트워치 4번)
+      tablet:     { min_ms: 20000, gap_ms: 20000, cooldown_ms: 30000 }
       note:       { min_ms: 10000, gap_ms: 7000,  cooldown_ms: 30000 }  # gap 은 D-FINE 주기(3초)의 2배 이상
-      smartwatch: { min_ms: 15000, gap_ms: 10000, cooldown_ms: 60000 }
+      smartwatch: { min_ms: 30000, gap_ms: 20000, cooldown_ms: 60000 }
       # 손 3개 이상: 계약에 없는 유형(D-7)이라 shadow=true(콜백 없음, 지표·로그만)
       many_hands: { min_ms: 5000,  gap_ms: 3000,  cooldown_ms: 30000, shadow: true }
 
@@ -57,7 +58,7 @@ models:
   smartwatch_threshold: 0.5
   phone_threshold: 0.5       # 다른 휴대폰(이벤트 유형 없음 - 기록만)
   dfine_interval_ms: 3000    # D-FINE 를 세션마다 3초 주기로(사이에는 직전 박스 재사용). 0 이면 매 프레임
-  owl_interval_ms: 5000      # OWLv2 를 세션마다 이 간격으로
+  owl_interval_ms: 10000     # OWLv2 를 세션마다 이 간격으로(5초 -> 10초: GPU 1장 20명 목표, 2026-11-27)
   hand_threshold: 0.5        # MediaPipe Hands 감지 기준값
   max_hands: 4
   hand_merge_distance: 0.06  # 이보다 가까운 손은 하나로 합침(프레임 비율, 임시값)
@@ -65,4 +66,7 @@ models:
   face_threshold: 0.5        # RTMW 얼굴 점 평균 점수 기준
   yaw_scale: 0.55            # RTMW 머리 좌우 각도 보정(본인 사진 10장 기준 임시값)
   pitch_scale: 1.0
+  fp16: true                 # D-FINE·OWLv2 반정밀도(GPU 일 때만, CPU 는 항상 fp32)
+  fast_preprocess: true      # D-FINE·OWLv2 전처리를 torch(GPU)로(false: transformers 기본, OWLv2 CPU 약 120ms/장)
+  person_box_interval_ms: 3000  # 웹캠 사람 상자(YOLOX)는 세션마다 3초 주기, 사이에는 직전 상자 재사용(0 = 매 프레임)
   pose_every: 3             # 웹캠 포즈(어깨)는 3프레임마다(사이에는 직전 값 재사용, CPU 절약)

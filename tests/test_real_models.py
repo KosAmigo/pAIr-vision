@@ -71,10 +71,10 @@ def test_owl_runs_only_on_interval_and_forget_resets(detector):
     labels = lambda t: {o.label for o in detector.run([Frame("OWL", "phone", t, t, jpeg)])[0].objects}  # noqa: E731
     first = labels(0)
     assert "tablet" in first or "smartwatch" in first or "phone" in first  # 첫 프레임은 OWLv2 실행
-    assert not (labels(1000) & {"tablet", "smartwatch", "phone"})  # 5초 안: 실행 안 함
-    assert labels(5000) & {"tablet", "smartwatch", "phone"}
+    assert not (labels(1000) & {"tablet", "smartwatch", "phone"})  # 10초 안: 실행 안 함
+    assert labels(10000) & {"tablet", "smartwatch", "phone"}
     detector.forget("OWL")
-    assert labels(5100) & {"tablet", "smartwatch", "phone"}
+    assert labels(10100) & {"tablet", "smartwatch", "phone"}
 
 
 def test_webcam_channel_gives_face_features(detector):
@@ -115,7 +115,7 @@ def test_session_makes_tablet_and_smartwatch_events_from_real_photo(detector, ru
     jpeg = jpeg_of("1.png")  # 1번 사진: 태블릿·스마트워치가 보인다
     session = Session("K", "exam", 0, rules.profile("default"))
     types = []
-    for t in range(0, 16000, 1000):
+    for t in range(0, 32000, 1000):  # 스마트워치 30초 연속(OWLv2 10초 주기 4번)
         det = detector.run([Frame("S", "phone", t, t, jpeg)])[0]
         types += [e.type for e in session.on_detection(det).events if not e.final]
     assert "TABLET" in types and "SMARTWATCH" in types

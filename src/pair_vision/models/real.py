@@ -53,8 +53,10 @@ class RealDetector(Detector):
         *,
         lock_path: str | Path | None = None,
         verify: bool = True,
+        fp16_skip: frozenset[str] = frozenset(),
     ) -> None:
         self._dir = Path(models_dir)
+        self._fp16_skip = frozenset(fp16_skip)  # fp32 로 둘 모델("dfine"·"owlv2", VISION_FP16_SKIP)
         self._rules = rules
         self._lock_path = lock_path
         self._verify = verify
@@ -85,6 +87,15 @@ class RealDetector(Detector):
 
         self._torch = torch
         self._device = "cuda" if torch.cuda.is_available() else "cpu"
+        # 반정밀도는 GPU 일 때만(CPU 는 느리고 일부 연산이 없다). 설정 models.fp16, 모델별 끄기 VISION_FP16_SKIP.
+        # - OWLv2: 가중치까지 fp16(.half()).
+        # - D-FINE: 혼합 정밀도(autocast fp16). 가중치를 통째로 .half() 하면 검출이 전부 사라졌다(이 PC 측정: 사진 3장에서
+        #   키보드·마우스·노트 0개, 값 넘침으로 보임). autocast 는 softmax·정규화 등을 fp32 로 남겨 검출 수가 같았다.
+        want = self._device == "cuda" and self._rules.fp16
+        self._owl_half = want and "owlv2" not in self._fp16_skip
+        self._dfine_amp = want and "dfine" not in self._fp16_skip
+        self._amp_device = self._device
+        self._dtype = torch.float16 if self._owl_half else torch.float32  # OWLv2 입력 dtype
         self.gpu = self._device == "cuda"
         self._dfine_proc = AutoImageProcessor.from_pretrained(self._dir / DFINE_DIR)
         self._dfine = AutoModelForObjectDetection.from_pretrained(self._dir / DFINE_DIR).to(self._device).eval()
@@ -92,6 +103,8 @@ class RealDetector(Detector):
         self._owl = (
             AutoModelForZeroShotObjectDetection.from_pretrained(self._dir / OWL_DIR).to(self._device).eval()
         )
+        if self._owl_half:
+            self._owl.half()
         r = self._rules
         self._rtmw = None
         if rtmw:  # 손·얼굴·몸을 GPU 한 모델(RTMW)로
@@ -103,11 +116,19 @@ class RealDetector(Detector):
         else:
             self._load_mediapipe()
         self._owl_texts = [list(OWL_PROMPTS)]
+        text = self._owl_proc(text=self._owl_texts, return_tensors="pt")  # 질의 문장은 늘 같다: 한 번만 토큰화
+        self._owl_ids = text["input_ids"].to(self._device)
+        self._owl_mask = text["attention_mask"].to(self._device)
         self._thresholds = {
             "keyboard": r.keyboard_threshold, "mouse": r.mouse_threshold, "note": r.note_threshold,
             "tablet": r.tablet_threshold, "smartwatch": r.smartwatch_threshold, "phone": r.phone_threshold,
         }
-        log.info("모델 적재 완료 (device=%s, 비전 백엔드=%s, gpu=%s)", self._device, r.vision_backend, self.gpu)
+        log.info("모델 적재 완료 (device=%s, 비전 백엔드=%s, gpu=%s, 정밀도=%s, 빠른 전처리=%s)",
+                 self._device, r.vision_backend, self.gpu, self.precision, r.fast_preprocess)
+
+    @property
+    def precision(self) -> dict[str, str]:
+        return {"dfine": "amp-fp16" if self._dfine_amp else "fp32", "owlv2": "fp16" if self._owl_half else "fp32"}
 
     def _load_mediapipe(self) -> None:
         import mediapipe as mp
@@ -141,6 +162,8 @@ class RealDetector(Detector):
     def forget(self, key: str) -> None:
         self._owl_cadence.forget(key)
         self._coco_cadence.forget(key)
+        if getattr(self, "_rtmw", None) is not None:
+            self._rtmw.boxes.forget(key)
         self._last_coco.pop(key, None)
         self._webcam_frames.pop(key, None)
         self._last_pose.pop(key, None)
@@ -206,7 +229,7 @@ class RealDetector(Detector):
         self._timed("decode", t)
         if self._rtmw is not None:
             t = time.perf_counter()
-            features = self._rtmw.webcam(np.asarray(image))
+            features = self._rtmw.webcam(np.asarray(image), frame.key, frame.recv_ms)
             self._timed("webcam", t)
             return Detection(key=frame.key, channel=frame.channel, seq=frame.seq, recv_ms=frame.recv_ms, webcam=features)
         mp_image = self._mp.Image(self._mp.ImageFormat.SRGB, np.asarray(image))
@@ -229,46 +252,102 @@ class RealDetector(Detector):
             webcam=webcam_features(count, matrix, blend, landmarks),
         )
 
-    def _detect_coco(self, image) -> list[ObjectDet]:
-        torch = self._torch
-        inputs = self._dfine_proc(images=image, return_tensors="pt").to(self._device)
-        with torch.inference_mode():
-            out = self._dfine(**inputs)
-        floor = min(self._thresholds[k] for k in ("keyboard", "mouse", "note"))
-        res = self._dfine_proc.post_process_object_detection(
-            out, threshold=floor, target_sizes=[(image.height, image.width)]
-        )[0]
-        id2label = self._dfine.config.id2label
-        found = []
-        for score, label_id, box in zip(res["scores"], res["labels"], res["boxes"], strict=True):
-            label = COCO_LABELS.get(id2label[int(label_id)])
-            if label is None or float(score) < self._thresholds[label]:
-                continue
-            x0, y0, x1, y1 = box.tolist()
-            found.append(
-                ObjectDet(label, float(score), Box(x0 / image.width, y0 / image.height, x1 / image.width, y1 / image.height))
-            )
-        return found
+    # --- D-FINE·OWLv2: 여러 장 한 번에(묶음 추론). 한 장씩 경로도 같은 함수를 1장으로 부른다 ---
+    def coco_pixels(self, rgb, device: str | None = None):  # rgb: numpy HxWx3 또는 (3,H,W) uint8 텐서(전부 GPU 경로)
+        """D-FINE 입력 텐서 하나(3x640x640, float32). fast_preprocess 면 torch(device), 아니면 transformers 기본 처리기."""
+        if self._rules.fast_preprocess:
+            from pair_vision.models.preprocess import dfine_pixels
 
-    def _detect_owl(self, image) -> list[ObjectDet]:
+            return dfine_pixels(rgb, device or "cpu")
+        return self._dfine_proc(images=rgb, return_tensors="pt")["pixel_values"][0]
+
+    def owl_pixels(self, rgb, device: str | None = None):
+        """OWLv2 입력 텐서 하나(3x960x960). 기본 처리기는 CPU 에서 장당 약 120ms 라 fast_preprocess 를 권장."""
+        if self._rules.fast_preprocess:
+            from pair_vision.models.preprocess import owl_pixels
+
+            return owl_pixels(rgb, device or "cpu")
+        return self._owl_proc.image_processor(images=rgb, return_tensors="pt")["pixel_values"][0]
+
+    def _stack(self, pixels: list, dtype=None):
+        return self._torch.stack([p.to(self._device) for p in pixels]).to(dtype or self._torch.float32)
+
+    def _dfine_forward(self, pixels: list):
+        import contextlib
+
         torch = self._torch
-        inputs = self._owl_proc(text=self._owl_texts, images=image, return_tensors="pt").to(self._device)
+        amp = (torch.autocast(self._amp_device, dtype=torch.float16) if self._dfine_amp
+               else contextlib.nullcontext())
+        with torch.inference_mode(), amp:
+            return self._dfine(pixel_values=self._stack(pixels))
+
+    def _check_finite(self, model: str, out) -> None:
+        """fp16 넘침(NaN·inf) 안전장치: 그대로 두면 점수가 전부 기준값 아래로 떨어져 '물체 없음'으로 조용히 나온다.
+        오류로 올려 그 프레임을 버리고 detector_errors 에 세게 한다(로그에 fp16 을 끄라고 남김)."""
+        torch = self._torch
+        if not (torch.isfinite(out.logits).all() and torch.isfinite(out.pred_boxes).all()):
+            raise RuntimeError(f"{model} 출력에 NaN/inf (정밀도 {self.precision}). fp16 문제면 VISION_FP16_SKIP 또는 models.fp16: false")
+
+    def coco_batch(self, pixels: list, sizes: list[tuple[int, int]]) -> list[list[ObjectDet]]:
+        """D-FINE 를 묶음으로. sizes: 장마다 (높이, 너비)."""
+        out = self._dfine_forward(pixels)
+        out.logits = out.logits.float()
+        out.pred_boxes = out.pred_boxes.float()
+        self._check_finite("D-FINE", out)
+        floor = min(self._thresholds[k] for k in ("keyboard", "mouse", "note"))
+        results = self._dfine_proc.post_process_object_detection(out, threshold=floor, target_sizes=list(sizes))
+        id2label = self._dfine.config.id2label
+        batch = []
+        for res, (height, width) in zip(results, sizes, strict=True):
+            found = []
+            for score, label_id, box in zip(res["scores"], res["labels"], res["boxes"], strict=True):
+                label = COCO_LABELS.get(id2label[int(label_id)])
+                if label is None or float(score) < self._thresholds[label]:
+                    continue
+                x0, y0, x1, y1 = box.tolist()
+                found.append(ObjectDet(label, float(score), Box(x0 / width, y0 / height, x1 / width, y1 / height)))
+            batch.append(found)
+        return batch
+
+    def owl_batch(self, pixels: list, sizes: list[tuple[int, int]]) -> list[list[ObjectDet]]:
+        """OWLv2 를 묶음으로. 질의 문장(3개)은 장마다 반복해 넣는다(OWLv2 는 input_ids 를 장 수 x 질의 수로 받는다)."""
+        torch = self._torch
+        n = len(pixels)
         with torch.inference_mode():
-            out = self._owl(**inputs)
-        side = max(image.height, image.width)  # OWLv2 는 긴 변 기준 정사각형 평면 좌표를 낸다
+            out = self._owl(
+                input_ids=self._owl_ids.repeat(n, 1), attention_mask=self._owl_mask.repeat(n, 1),
+                pixel_values=self._stack(pixels, self._dtype),
+            )
+        out.logits = out.logits.float()
+        out.pred_boxes = out.pred_boxes.float()
+        self._check_finite("OWLv2", out)
         post = (
             getattr(self._owl_proc, "post_process_grounded_object_detection", None)
             or self._owl_proc.post_process_object_detection
         )
         floor = min(self._thresholds[k] for k in ("tablet", "smartwatch", "phone"))
-        res = post(out, threshold=floor, target_sizes=[(side, side)])[0]
+        # OWLv2 는 긴 변 기준 정사각형 평면 좌표를 낸다
+        results = post(out, threshold=floor, target_sizes=[(max(h, w), max(h, w)) for h, w in sizes])
         prompts = list(OWL_PROMPTS)
-        found = []
-        for score, label_id, box in zip(res["scores"], res["labels"], res["boxes"], strict=True):
-            label = OWL_PROMPTS[prompts[int(label_id)]]
-            if float(score) >= self._thresholds[label]:
-                found.append(ObjectDet(label, float(score), box_in_image(box.tolist(), image.width, image.height)))
-        return found
+        batch = []
+        for res, (height, width) in zip(results, sizes, strict=True):
+            found = []
+            for score, label_id, box in zip(res["scores"], res["labels"], res["boxes"], strict=True):
+                label = OWL_PROMPTS[prompts[int(label_id)]]
+                if float(score) >= self._thresholds[label]:
+                    found.append(ObjectDet(label, float(score), box_in_image(box.tolist(), width, height)))
+            batch.append(found)
+        return batch
+
+    def _detect_coco(self, image) -> list[ObjectDet]:
+        import numpy as np
+
+        return self.coco_batch([self.coco_pixels(np.asarray(image), self._device)], [(image.height, image.width)])[0]
+
+    def _detect_owl(self, image) -> list[ObjectDet]:
+        import numpy as np
+
+        return self.owl_batch([self.owl_pixels(np.asarray(image), self._device)], [(image.height, image.width)])[0]
 
     def _detect_hands(self, image) -> list[HandDet]:
         import numpy as np
